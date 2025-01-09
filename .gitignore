@@ -1,0 +1,31 @@
+# Byte-compiled files
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environment
+venv/
+.env/
+
+# macOS system files
+.DS_Store
+
+# VS Code settings
+.vscode/
+
+# Logs and temporary files
+*.log
+*.tmp
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Python egg files
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Other IDE settings
+.idea/
+*.swp
