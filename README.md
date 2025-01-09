@@ -1,4 +1,4 @@
-# Medical Image Viewer
+# MediPixel
 
 A Python-based GUI application for medical image visualization, processing, and analysis. This tool is designed for working with medical images in formats like DICOM and standard image formats.
 
@@ -42,9 +42,9 @@ You can install all dependencies using the `requirements.txt` file.
 ## **Installation**
 1. Clone the repository:
    ```bash
-   git clone https://github.com/AbdelMoety/Medical-Image-Viewer.git
+   git clone https://github.com/BasselShaheen/MediPixel.git
 2. Navigate to the project directory:
-   cd MedicalImageApp
+   cd MediPixel
 3. Create a virtual environment and activate it:
    python -m venv venv
    source venv\Scripts\activate
