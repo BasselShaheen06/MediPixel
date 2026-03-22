@@ -1,31 +1,41 @@
-# Byte-compiled files
+# Python
 __pycache__/
 *.py[cod]
 *.pyo
-
-# Virtual environment
-venv/
-.env/
-
-# macOS system files
-.DS_Store
-
-# VS Code settings
-.vscode/
-
-# Logs and temporary files
-*.log
-*.tmp
-
-# Jupyter Notebook checkpoints
-.ipynb_checkpoints/
-
-# Python egg files
-*.egg
+*.pyd
+.Python
 *.egg-info/
 dist/
 build/
+.eggs/
 
-# Other IDE settings
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
 .idea/
-*.swp
+*.suo
+*.user
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Medical data — never commit patient files
+*.dcm
+*.nii
+*.nii.gz
+*.nrrd
+
+# Test outputs
+*.png
+*.jpg
+*.bmp
+!screenShots/
+!assets/
+
+# Jupyter
+.ipynb_checkpoints/

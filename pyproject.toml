@@ -1,0 +1,56 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "medipixel"
+version = "1.0.0"
+description = "Medical image processing workstation — noise, denoising, contrast, SNR/CNR"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+keywords = ["medical imaging", "DICOM", "image processing", "SNR", "CNR", "denoising"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Healthcare Industry",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+    "Topic :: Scientific/Engineering :: Image Processing",
+]
+dependencies = [
+    "PyQt5>=5.15",
+    "numpy>=1.24",
+    "opencv-python>=4.8",
+    "matplotlib>=3.6",
+    "Pillow>=9.0",
+    "pydicom>=2.3",
+    "scikit-image>=0.20",
+    "scipy>=1.10",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "black>=23.0",
+    "ruff>=0.1",
+]
+
+[project.scripts]
+medipixel = "medipixel.ui.main_window:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["medipixel"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP", "B"]
+ignore = ["E501", "B008"]
