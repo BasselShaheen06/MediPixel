@@ -5,7 +5,11 @@ site_url: https://basselshaheen06.github.io/MediPixel
 repo_url: https://github.com/BasselShaheen06/MediPixel
 repo_name: BasselShaheen06/MediPixel
 
-copyright: "MIT License — Bassel Shaheen, Cairo University SBME"
+copyright: >
+  MIT License &nbsp;·&nbsp; Bassel Shaheen, Cairo University SBME &nbsp;·&nbsp;
+  <a href="mailto:bassel.abdelmonem06@eng-st.cu.edu.eg" class="footer-contact">
+    ✉ bassel.abdelmonem06@eng-st.cu.edu.eg
+  </a>
 
 theme:
   name: material
@@ -20,9 +24,11 @@ theme:
     - navigation.tabs
     - navigation.top
     - navigation.sections
+    - navigation.footer
     - content.code.copy
     - search.highlight
     - search.suggest
+    - toc.follow
 
 nav:
   - Home: index.md
@@ -61,11 +67,23 @@ markdown_extensions:
       permalink: true
   - pymdownx.arithmatex:
       generic: true
+  - pymdownx.tabbed:
+      alternate_style: true
 
 extra_javascript:
   - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
+
+extra_css:
+  - stylesheets/extra.css
 
 extra:
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/BasselShaheen06
+      name: BasselShaheen06 on GitHub
+    - icon: fontawesome/brands/linkedin
+      link: https://www.linkedin.com/in/basselshaheen06/
+      name: Bassel Shaheen on LinkedIn
+    - icon: fontawesome/solid/envelope
+      link: mailto:bassel.abdelmonem06@eng-st.cu.edu.eg
+      name: Email Bassel
