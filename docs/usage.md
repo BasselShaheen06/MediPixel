@@ -92,9 +92,9 @@ After finishing you can still drag all three boxes to adjust positions. Click **
 
 ### Formulas
 
-$$\text{SNR} = \frac{\mu_{\text{signal}}}{\sigma_{\text{noise}}}$$
+$\text{SNR} = \frac{\mu_{\text{signal}}}{\sigma_{\text{noise}}}$
 
-$$\text{CNR} = \frac{|\mu_{\text{signal A}} - \mu_{\text{signal B}}|}{\sigma_{\text{noise}}}$$
+$\text{CNR} = \frac{|\mu_{\text{signal A}} - \mu_{\text{signal B}}|}{\sigma_{\text{noise}}}$
 
 Where $\mu$ is the mean pixel value inside the ROI and $\sigma$ is the standard deviation.
 
