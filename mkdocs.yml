@@ -1,0 +1,63 @@
+site_name: MediPixel
+site_description: Medical image processing workstation — noise, denoising, contrast, SNR/CNR
+site_author: Bassel Shaheen
+site_url: https://basselshaheen06.github.io/MediPixel
+repo_url: https://github.com/BasselShaheen06/MediPixel
+repo_name: BasselShaheen06/MediPixel
+
+copyright: "MIT License — Bassel Shaheen, Cairo University SBME"
+
+theme:
+  name: material
+  palette:
+    scheme: default
+    primary: teal
+    accent: teal
+  font:
+    text: Inter
+    code: JetBrains Mono
+  features:
+    - navigation.tabs
+    - navigation.top
+    - navigation.sections
+    - content.code.copy
+    - search.highlight
+    - search.suggest
+
+nav:
+  - Home: index.md
+  - Installation: installation.md
+  - Usage: usage.md
+  - The Science: science.md
+  - API Reference:
+      - core/noise.py: api/noise.md
+      - core/denoiser.py: api/denoiser.md
+      - core/contrast.py: api/contrast.md
+
+plugins:
+  - search
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - admonition
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/BasselShaheen06
