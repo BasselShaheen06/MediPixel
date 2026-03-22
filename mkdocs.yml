@@ -33,6 +33,9 @@ nav:
       - core/noise.py: api/noise.md
       - core/denoiser.py: api/denoiser.md
       - core/contrast.py: api/contrast.md
+  - Roadmap: roadmap.md
+  - Changelog: changelog.md
+  - Contributing: contributing.md
 
 plugins:
   - search
@@ -56,6 +59,11 @@ markdown_extensions:
   - tables
   - toc:
       permalink: true
+  - pymdownx.arithmatex:
+      generic: true
+
+extra_javascript:
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
 
 extra:
   social:
