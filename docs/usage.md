@@ -116,6 +116,16 @@ Switch to the **Histogram** tab using the tab bar.
 | Show CDF | Toggle the cumulative distribution function on a right Y-axis (0–100%) |
 | Export PNG | Save the current histogram figure at 150 DPI |
 
+## Color images
+
+When loading a PNG or JPEG, a dialog asks whether to keep color or convert
+to grayscale. For DICOM, grayscale is always used.
+
+In color mode, contrast operations (CLAHE, histogram equalization, gamma)
+work on the luminance channel only — hue and saturation are preserved.
+SNR and CNR are measured on the ITU-R BT.601 luminance: Y = 0.299R + 0.587G + 0.114B.
+The histogram tab shows R, G, B as separate lines.
+
 ### Reading the CDF
 
 The CDF shows what percentage of pixels fall below each intensity level. A steep CDF means high contrast — intensity is spread across the full range. A flat CDF means low contrast — most pixels are clustered in a narrow band.

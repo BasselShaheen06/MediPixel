@@ -19,6 +19,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Mode indicator pill** in toolbar showing current canvas interaction mode
 - **MkDocs Material documentation site** — deployed at basselshaheen06.github.io/MediPixel
 - **GitHub Actions** — automatic docs deployment on every push to main
+- **Color/grayscale mode** — dialog on load for PNG/JPEG; DICOM always grayscale
+- **Color-aware processing** — all core functions handle (H,W,3) arrays; contrast operations use LAB luminance channel to preserve hue
+- **Per-channel histogram** — R/G/B lines shown separately in color mode
+- **Histogram checkboxes** — "Overlay all" and "Show CDF" are now checkboxes
+- **Guided tour** — 7-step walkthrough on first launch, restartable via "?" button
+- **Tooltips** — every control has a hover tooltip explaining its function
+- **ROI on thumbnails** — sidebar viewports show ROI box overlays
 
 ### Changed
 - Main canvas migrated from matplotlib to pyqtgraph
