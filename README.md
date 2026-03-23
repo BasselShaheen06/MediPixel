@@ -41,14 +41,17 @@ It was built as a teaching tool to make the effects of each processing step visi
 
 ## Screenshots
 
-### Noise addition and denoising
-![Noising and denoising](screenShots/noising_and_denoising.png)
+### Main canvas
+![Main canvas](assets/demo/screenshot_main.png)
 
-### Interpolation comparison
-![Interpolation methods](screenShots/different_interpolation_methods.png)
+### Pipeline (Gaussian + NLM)
+![Pipeline](assets/demo/screenshot_pipeline.png)
 
-### Pixel intensity histogram
-![Histogram](screenShots/histogram.png)
+### ROI and quantitative metrics
+![ROI metrics](assets/demo/screenshot_roi.png)
+
+### Histogram tab with CDF and R/G/B channels
+![Histogram CDF](assets/demo/screenshot_histogram.png)
 
 ---
 
@@ -99,6 +102,8 @@ MediPixel/
 │       ├── canvas.py           ← DraggableCanvas (click-drag panning)
 │       ├── histogram.py        ← HistogramWindow (separate panel)
 │       └── main_window.py      ← MedicalImageApp (Qt layout + pipeline wiring)
+├── assets/
+│   └── demo/
 └── screenShots/
 ```
 

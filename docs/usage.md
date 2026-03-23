@@ -5,7 +5,7 @@
 Click **Load image** in the toolbar. MediPixel accepts:
 
 - DICOM (`.dcm`) — single frame and multi-frame
-- PNG, JPEG, BMP, TIFF — converted to grayscale on load
+- PNG, JPEG, BMP, TIFF — loaded with a choice between color and grayscale
 
 The image appears on the **Original** tab. All pixel values are normalised to uint8 `[0, 255]` on load.
 
