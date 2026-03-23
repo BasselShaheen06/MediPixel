@@ -485,13 +485,13 @@ class GuidedTour(QWidget):
             QWidget {{
                 background:{C_SURFACE};
                 border:2px solid {C_ACCENT};
-                border-radius:10px;
+                border-radius:12px;
             }}
         """)
-        self._popup.setFixedWidth(300)
+        self._popup.setFixedWidth(320)
         pl = QVBoxLayout(self._popup)
-        pl.setContentsMargins(16, 14, 16, 14)
-        pl.setSpacing(8)
+        pl.setContentsMargins(20, 18, 20, 18)
+        pl.setSpacing(10)
 
         self._tour_title = QLabel()
         self._tour_title.setStyleSheet(
@@ -609,8 +609,8 @@ class GuidedTour(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        # Dim overlay
-        painter.fillRect(self.rect(), QColor(0, 0, 0, 120))
+        # Dim overlay — subtle, not claustrophobic
+        painter.fillRect(self.rect(), QColor(0, 0, 0, 70))
 
         # Cut out target widget
         pos  = step.target.mapTo(self.parent(), QPoint(0, 0))
@@ -1052,18 +1052,37 @@ class MedicalImageApp(QMainWindow):
         )
         hc.addWidget(self._hist_source)
 
-        self._compare_btn = _btn_secondary("Overlay all", h=28)
-        self._compare_btn.setFixedWidth(96)
-        self._compare_btn.setToolTip(
-            "Plot Original, VP1, and VP2 on one chart"
-        )
-        hc.addWidget(self._compare_btn)
+        checkbox_style = f"""
+            QCheckBox {{
+                color:{C_TEXT}; font-size:{FONT_S}px; spacing:5px;
+                background:transparent;
+            }}
+            QCheckBox::indicator {{
+                width:16px; height:16px;
+                border:1.5px solid {C_BORDER_MED};
+                border-radius:4px; background:{C_SURFACE};
+            }}
+            QCheckBox::indicator:checked {{
+                background:{C_ACCENT}; border-color:{C_ACCENT};
+                image:none;
+            }}
+            QCheckBox::indicator:hover {{
+                border-color:{C_ACCENT};
+            }}
+        """
+        from PyQt5.QtWidgets import QCheckBox
 
-        self._cdf_btn = _btn_secondary("Show CDF", h=28)
-        self._cdf_btn.setCheckable(True)
-        self._cdf_btn.setFixedWidth(88)
+        self._compare_cb = QCheckBox("Overlay all")
+        self._compare_cb.setStyleSheet(checkbox_style)
+        self._compare_cb.setToolTip(
+            "Overlay Original, VP1, and VP2 on one chart"
+        )
+        hc.addWidget(self._compare_cb)
+
+        self._cdf_btn = QCheckBox("Show CDF")
+        self._cdf_btn.setStyleSheet(checkbox_style)
         self._cdf_btn.setToolTip(
-            "Toggle cumulative distribution function overlay"
+            "Add cumulative distribution function on right axis"
         )
         hc.addWidget(self._cdf_btn)
 
@@ -1276,8 +1295,8 @@ class MedicalImageApp(QMainWindow):
         self._calc_cnr_btn.clicked.connect(self._calculate_cnr)
 
         self._hist_source.currentIndexChanged.connect(self._refresh_histogram)
-        self._compare_btn.clicked.connect(self._compare_histograms)
-        self._cdf_btn.toggled.connect(self._refresh_histogram)
+        self._compare_cb.stateChanged.connect(self._on_hist_mode_changed)
+        self._cdf_btn.stateChanged.connect(self._on_hist_mode_changed)
         self._export_hist_btn.clicked.connect(self._export_histogram)
 
         for w in [self._resolution, self._interp, self._viewport_sel]:
@@ -1771,6 +1790,13 @@ class MedicalImageApp(QMainWindow):
             return (region.astype(np.uint8)
                     if region is not None else None), source
         return None, source
+
+    def _on_hist_mode_changed(self):
+        """Route to overlay or single histogram based on checkbox states."""
+        if self._compare_cb.isChecked():
+            self._compare_histograms()
+        else:
+            self._refresh_histogram()
 
     def _refresh_histogram(self):
         src      = self._hist_source.currentText()
