@@ -11,6 +11,17 @@ The image appears on the **Original** tab. All pixel values are normalised to ui
 
 ---
 
+## Onboarding and UI preferences
+
+- **Startup cover page**: a short splash screen appears before the main window opens.
+- **Guided tour**: use the guide action to walk through the main controls and workflow.
+- **Font family selector**: choose between bundled UI fonts from the top controls.
+- **Font scale (%)**: adjust global text size with the numeric percentage control.
+
+Both font family and scale are persisted with `QSettings` and restored on next launch.
+
+---
+
 ## The processing pipeline
 
 Controls are in the left sidebar, grouped into collapsible sections. Click any section title to hide or show its controls.

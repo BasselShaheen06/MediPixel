@@ -4,8 +4,7 @@
 
 ---
 
-<!-- Replace this placeholder once final GIF is recorded -->
-<!-- ![MediPixel demo](assets/demo/demo.gif) -->
+> Demo GIF placeholder: final recording will be added as `assets/demo/demo.gif` before release.
 
 MediPixel is a desktop application for experimenting with medical image quality. Load a DICOM or standard image, apply a chain of operations — noise addition, denoising, frequency filtering, contrast enhancement — and compare results side by side. SNR and CNR are calculated from interactively drawn ROIs.
 
@@ -25,6 +24,8 @@ It was built as a teaching tool: every operation is visible, measurable, and sci
 | **Histogram analysis** | Full image, ROI region, CDF overlay, multi-source comparison |
 | **Image formats** | DICOM (`.dcm`), PNG, JPEG, BMP, TIFF |
 | **Canvas interaction** | Scroll to zoom, drag to pan (pyqtgraph) |
+| **UI onboarding** | Guided tour overlay + startup cover screen |
+| **Typography controls** | In-app font family picker + global font scale (%) |
 
 ---
 
