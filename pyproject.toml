@@ -21,6 +21,7 @@ classifiers = [
 ]
 dependencies = [
     "PyQt5>=5.15",
+    "pyqtgraph>=0.13",
     "numpy>=1.24",
     "opencv-python>=4.8",
     "matplotlib>=3.6",
@@ -38,7 +39,7 @@ dev = [
 ]
 
 [project.scripts]
-medipixel = "medipixel.ui.main_window:main"
+medipixel = "main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["medipixel"]
