@@ -2,16 +2,13 @@
 MedicalImageApp — MediPixel main window.
 Color scheme: Clean Teal (D)
 
-Main canvas: pyqtgraph ImageView
-  - scroll to zoom, right-click drag to pan, native
-  - RectROI for interactive ROI boxes (movable + resizable with handles)
-  - Guided ROI workflow: Signal A → confirm → Signal B → confirm → Noise → confirm
-
-Thumbnails + histogram: matplotlib (unchanged)
-
-Debounce:
-  view (zoom/FOV/resolution) → 30ms
-  compute (noise/filter/contrast) → 120ms
+New in this version:
+  - Color/grayscale choice dialog on image load
+  - Aspect-ratio locked pyqtgraph canvas
+  - ROI overlays drawn on sidebar thumbnails
+  - Per-series histogram color pickers (QColorDialog)
+  - Tooltips on every control
+  - Guided tour (GuidedTour class)
 """
 
 import numpy as np
@@ -19,24 +16,26 @@ import pydicom
 from PIL import Image
 
 import pyqtgraph as pg
-from pyqtgraph import ImageView, ROI, RectROI, ImageItem
+from pyqtgraph import ImageView, RectROI
 
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QFrame, QPushButton, QLabel, QSlider, QComboBox, QSpinBox,
-    QFileDialog, QSplitter, QScrollArea, QSizePolicy,
+    QFileDialog, QSplitter, QScrollArea, QSizePolicy, QDialog,
+    QColorDialog, QApplication,
 )
-from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QColor
+from PyQt5.QtCore import Qt, QTimer, QSettings, QRect, QPoint
+from PyQt5.QtGui import QColor, QPainter, QPen, QFont
 
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.patches import FancyBboxPatch
+from matplotlib.patches import FancyBboxPatch, Rectangle as MplRect
 
 from medipixel.core import noise, denoiser, contrast
+from medipixel.core.contrast import to_luminance
 from medipixel.ui.canvas import DraggableCanvas
 
-# ── pyqtgraph global config ───────────────────────────────────────────────────
+# ── pyqtgraph config ──────────────────────────────────────────────────────────
 pg.setConfigOptions(imageAxisOrder="row-major", antialias=True)
 pg.setConfigOption("background", "#FFFFFF")
 pg.setConfigOption("foreground", "#0D1B1A")
@@ -55,32 +54,37 @@ C_BORDER     = "#E0ECEB"
 C_BORDER_MED = "#C4D8D6"
 C_CARD_BG    = "#F0F7F6"
 
-# ROI pen colors
 ROI_CFG = {
     "signal_a": {"pen": pg.mkPen("#B71C1C", width=2),
                  "hpen": pg.mkPen("#EF5350", width=2),
-                 "label": "Signal A"},
+                 "label": "Signal A", "mpl_color": "#B71C1C"},
     "signal_b": {"pen": pg.mkPen("#1565C0", width=2),
                  "hpen": pg.mkPen("#42A5F5", width=2),
-                 "label": "Signal B"},
+                 "label": "Signal B", "mpl_color": "#1565C0"},
     "noise":    {"pen": pg.mkPen("#1B5E20", width=2),
                  "hpen": pg.mkPen("#66BB6A", width=2),
-                 "label": "Noise"},
+                 "label": "Noise", "mpl_color": "#1B5E20"},
 }
 ROI_ORDER = ["signal_a", "signal_b", "noise"]
+
+# Default histogram series colors
+HIST_COLORS_DEFAULT = {
+    "Original":   "#0D1B1A",
+    "Viewport 1": "#00695C",
+    "Viewport 2": "#1565C0",
+}
 
 FONT         = 13
 FONT_S       = 12
 FONT_XS      = 11
 SIDEBAR_W    = 272
 RIGHT_W      = 286
-
 DEBOUNCE_VIEW    = 30
 DEBOUNCE_COMPUTE = 120
 
 
 # =============================================================================
-# Style helpers (identical to previous version)
+# Style helpers
 # =============================================================================
 
 def _combo(items, w=None):
@@ -196,7 +200,7 @@ def _hsep():
     return f
 
 
-def _slider_row(label, lo, hi, val):
+def _slider_row(label, lo, hi, val, tooltip=""):
     w = QWidget()
     w.setStyleSheet("background:transparent;")
     lay = QVBoxLayout(w)
@@ -211,12 +215,15 @@ def _slider_row(label, lo, hi, val):
     top.addWidget(val_lbl)
     sl = _slider(lo, hi, val)
     sl.valueChanged.connect(lambda v, vl=val_lbl: vl.setText(str(v)))
+    if tooltip:
+        sl.setToolTip(tooltip)
+        w.setToolTip(tooltip)
     lay.addLayout(top)
     lay.addWidget(sl)
     return w, sl
 
 
-def _inline(label, widget):
+def _inline(label, widget, tooltip=""):
     w = QWidget()
     w.setStyleSheet("background:transparent;")
     lay = QHBoxLayout(w)
@@ -225,11 +232,50 @@ def _inline(label, widget):
     lay.addWidget(_lbl(label, size=FONT_XS, color=C_TEXT_SEC))
     lay.addStretch()
     lay.addWidget(widget)
+    if tooltip:
+        w.setToolTip(tooltip)
+        widget.setToolTip(tooltip)
     return w
 
 
 # =============================================================================
-# Card + Section (same as before)
+# Color swatch button for histogram color picking
+# =============================================================================
+
+class ColorSwatchBtn(QPushButton):
+    """Small square button showing a color — click to open QColorDialog."""
+
+    def __init__(self, color: str, parent=None):
+        super().__init__(parent)
+        self._color = color
+        self.setFixedSize(22, 22)
+        self._update_style()
+
+    def _update_style(self):
+        self.setStyleSheet(f"""
+            QPushButton {{
+                background:{self._color};
+                border:1.5px solid {C_BORDER_MED};
+                border-radius:4px;
+            }}
+            QPushButton:hover {{ border-color:{C_ACCENT}; }}
+        """)
+
+    def color(self) -> str:
+        return self._color
+
+    def mousePressEvent(self, event):
+        qc = QColorDialog.getColor(
+            QColor(self._color), self, "Choose color"
+        )
+        if qc.isValid():
+            self._color = qc.name()
+            self._update_style()
+        super().mousePressEvent(event)
+
+
+# =============================================================================
+# Card + Section
 # =============================================================================
 
 class Card(QWidget):
@@ -298,6 +344,292 @@ class Section(QWidget):
 
 
 # =============================================================================
+# Color/Grayscale load dialog
+# =============================================================================
+
+class ColorModeDialog(QDialog):
+    """
+    Shown when loading a color image (PNG/JPEG with 3 channels).
+    Lets the user choose between keeping color or converting to grayscale.
+    """
+
+    def __init__(self, thumbnail: np.ndarray, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Image color mode")
+        self.setFixedWidth(480)
+        self.setStyleSheet(f"background:{C_SURFACE};")
+        self.choice = "grayscale"   # default
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(24, 20, 24, 20)
+        lay.setSpacing(16)
+
+        title = QLabel("How would you like to load this image?")
+        title.setStyleSheet(
+            f"color:{C_TEXT}; font-size:14px; font-weight:600;"
+        )
+        lay.addWidget(title)
+
+        # Thumbnail preview
+        if thumbnail is not None:
+            try:
+                from PIL import Image as PILImage
+                from PyQt5.QtGui import QPixmap, QImage
+                rgb = thumbnail if thumbnail.ndim == 3 else np.stack([thumbnail]*3, axis=2)
+                h, w = rgb.shape[:2]
+                qimg = QImage(rgb.data, w, h, w * 3, QImage.Format_RGB888)
+                pix  = QPixmap.fromImage(qimg).scaledToWidth(
+                    432, Qt.SmoothTransformation
+                )
+                thumb_lbl = QLabel()
+                thumb_lbl.setPixmap(pix)
+                thumb_lbl.setAlignment(Qt.AlignCenter)
+                lay.addWidget(thumb_lbl)
+            except Exception:
+                pass
+
+        # Option cards
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(12)
+
+        def _option_card(title_text, desc, value):
+            card = QWidget()
+            card.setStyleSheet(f"""
+                QWidget {{
+                    background:{C_CARD_BG};
+                    border:2px solid {C_BORDER_MED};
+                    border-radius:8px;
+                }}
+                QWidget:hover {{
+                    border-color:{C_ACCENT};
+                    background:{C_ACCENT_L};
+                }}
+            """)
+            cl = QVBoxLayout(card)
+            cl.setContentsMargins(14, 12, 14, 12)
+            cl.setSpacing(4)
+
+            t = QLabel(title_text)
+            t.setStyleSheet(
+                f"color:{C_TEXT}; font-size:13px; font-weight:600; background:transparent;"
+            )
+            d = QLabel(desc)
+            d.setWordWrap(True)
+            d.setStyleSheet(
+                f"color:{C_TEXT_SEC}; font-size:11px; background:transparent;"
+            )
+            cl.addWidget(t)
+            cl.addWidget(d)
+
+            btn = QPushButton(f"Use {title_text.lower()}")
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background:{C_ACCENT}; color:#FFF;
+                    border:none; border-radius:5px;
+                    font-size:12px; font-weight:600;
+                    padding:5px 0; margin-top:4px;
+                }}
+                QPushButton:hover {{ background:{C_ACCENT_H}; }}
+            """)
+            btn.clicked.connect(lambda _, v=value: self._choose(v))
+            cl.addWidget(btn)
+            return card
+
+        btn_row.addWidget(_option_card(
+            "Color",
+            "Keep the original RGB channels. Processing operates on "
+            "luminance for metrics — hue is preserved.",
+            "color",
+        ))
+        btn_row.addWidget(_option_card(
+            "Grayscale",
+            "Convert to single-channel luminance. Standard for CT, MRI, "
+            "and X-ray. Required if the image represents a single physical quantity.",
+            "grayscale",
+        ))
+        lay.addLayout(btn_row)
+
+    def _choose(self, value: str):
+        self.choice = value
+        self.accept()
+
+
+# =============================================================================
+# Guided tour
+# =============================================================================
+
+class TourStep:
+    def __init__(self, target: QWidget, title: str, text: str):
+        self.target = target
+        self.title  = title
+        self.text   = text
+
+
+class GuidedTour(QWidget):
+    """
+    Semi-transparent overlay with a spotlight cutout and tooltip popup.
+    Walks through a list of TourStep objects one by one.
+    """
+
+    def __init__(self, parent: QMainWindow):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+        self.setStyleSheet("background:transparent;")
+        self._steps: list[TourStep] = []
+        self._idx   = 0
+        self._active = False
+
+        # Popup card
+        self._popup = QWidget(self)
+        self._popup.setStyleSheet(f"""
+            QWidget {{
+                background:{C_SURFACE};
+                border:2px solid {C_ACCENT};
+                border-radius:10px;
+            }}
+        """)
+        self._popup.setFixedWidth(300)
+        pl = QVBoxLayout(self._popup)
+        pl.setContentsMargins(16, 14, 16, 14)
+        pl.setSpacing(8)
+
+        self._tour_title = QLabel()
+        self._tour_title.setStyleSheet(
+            f"color:{C_ACCENT}; font-size:14px; font-weight:700; background:transparent;"
+        )
+        self._tour_text = QLabel()
+        self._tour_text.setWordWrap(True)
+        self._tour_text.setStyleSheet(
+            f"color:{C_TEXT}; font-size:12px; background:transparent; line-height:1.5;"
+        )
+
+        nav = QHBoxLayout()
+        self._skip_btn = QPushButton("Skip tour")
+        self._skip_btn.setStyleSheet(f"""
+            QPushButton {{
+                background:transparent; color:{C_TEXT_SEC};
+                border:1px solid {C_BORDER_MED}; border-radius:5px;
+                font-size:11px; padding:4px 10px;
+            }}
+            QPushButton:hover {{ color:{C_ACCENT}; border-color:{C_ACCENT}; }}
+        """)
+        self._next_btn = QPushButton("Next  →")
+        self._next_btn.setStyleSheet(f"""
+            QPushButton {{
+                background:{C_ACCENT}; color:#FFF;
+                border:none; border-radius:5px;
+                font-size:11px; font-weight:600; padding:4px 14px;
+            }}
+            QPushButton:hover {{ background:{C_ACCENT_H}; }}
+        """)
+        self._counter = QLabel()
+        self._counter.setStyleSheet(
+            f"color:{C_TEXT_TER}; font-size:10px; background:transparent;"
+        )
+        nav.addWidget(self._skip_btn)
+        nav.addStretch()
+        nav.addWidget(self._counter)
+        nav.addWidget(self._next_btn)
+
+        pl.addWidget(self._tour_title)
+        pl.addWidget(self._tour_text)
+        pl.addLayout(nav)
+
+        self._skip_btn.clicked.connect(self.end)
+        self._next_btn.clicked.connect(self._advance)
+
+        self.hide()
+
+    def set_steps(self, steps: list[TourStep]):
+        self._steps = steps
+
+    def start(self):
+        if not self._steps:
+            return
+        self._idx    = 0
+        self._active = True
+        self.show()
+        self.raise_()
+        self.resize(self.parent().size())
+        self._show_step()
+
+    def end(self):
+        self._active = False
+        self.hide()
+        # Remember that tour was shown
+        QSettings("MediPixel", "MediPixel").setValue("tour_shown", True)
+
+    def _advance(self):
+        self._idx += 1
+        if self._idx >= len(self._steps):
+            self.end()
+        else:
+            self._show_step()
+
+    def _show_step(self):
+        step = self._steps[self._idx]
+        self._tour_title.setText(step.title)
+        self._tour_text.setText(step.text)
+        self._counter.setText(f"{self._idx + 1} / {len(self._steps)}")
+        self._next_btn.setText(
+            "Finish  ✓" if self._idx == len(self._steps) - 1 else "Next  →"
+        )
+        self.update()
+        self._position_popup(step.target)
+
+    def _position_popup(self, target: QWidget):
+        self._popup.adjustSize()
+        # Map target widget to tour overlay coordinates
+        pos  = target.mapTo(self.parent(), QPoint(0, 0))
+        rect = QRect(pos, target.size())
+
+        pw = self._popup.width()
+        ph = self._popup.height()
+        ow = self.width()
+        oh = self.height()
+
+        # Prefer placing popup to the right of target, then below, then left
+        x = rect.right() + 12
+        y = rect.top()
+        if x + pw > ow - 10:
+            x = rect.left() - pw - 12
+        if x < 10:
+            x = rect.left()
+            y = rect.bottom() + 12
+        y = max(10, min(y, oh - ph - 10))
+
+        self._popup.move(x, y)
+        self._popup.show()
+        self._popup.raise_()
+
+    def paintEvent(self, event):
+        if not self._active or not self._steps:
+            return
+        step = self._steps[self._idx]
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # Dim overlay
+        painter.fillRect(self.rect(), QColor(0, 0, 0, 120))
+
+        # Cut out target widget
+        pos  = step.target.mapTo(self.parent(), QPoint(0, 0))
+        rect = QRect(pos.x() - 4, pos.y() - 4,
+                     step.target.width() + 8, step.target.height() + 8)
+        painter.setCompositionMode(QPainter.CompositionMode_Clear)
+        painter.fillRect(rect, QColor(0, 0, 0, 0))
+        painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
+
+        # Accent border around target
+        pen = QPen(QColor(C_ACCENT), 2)
+        painter.setPen(pen)
+        painter.drawRoundedRect(rect, 6, 6)
+
+    def resizeEvent(self, event):
+        self.resize(self.parent().size())
+
+
+# =============================================================================
 # Main window
 # =============================================================================
 
@@ -312,6 +644,7 @@ class MedicalImageApp(QMainWindow):
         # Image state
         self.original_image: np.ndarray | None = None
         self.viewport_images: dict[int, np.ndarray | None] = {1: None, 2: None}
+        self._color_mode = False   # True = color, False = grayscale
 
         # Debounce timers
         self._timer_view = QTimer()
@@ -324,15 +657,23 @@ class MedicalImageApp(QMainWindow):
         self._timer_compute.setInterval(DEBOUNCE_COMPUTE)
         self._timer_compute.timeout.connect(self._process)
 
-        # ROI state — guided workflow
-        # _roi_step: index into ROI_ORDER (0=signal_a, 1=signal_b, 2=noise, 3=done)
+        # ROI state
         self._roi_step: int = -1
         self._pg_rois: dict[str, RectROI] = {}
+
+        # Histogram series colors (mutable)
+        self._hist_colors = dict(HIST_COLORS_DEFAULT)
 
         self._current_tab = 0
 
         self._build_ui()
         self._connect_signals()
+        self._setup_tour()
+
+        # Auto-show tour on first launch
+        settings = QSettings("MediPixel", "MediPixel")
+        if not settings.value("tour_shown", False):
+            QTimer.singleShot(800, self._tour.start)
 
     # =========================================================================
     # Build UI
@@ -379,6 +720,16 @@ class MedicalImageApp(QMainWindow):
                            size=FONT_S, color=C_TEXT_SEC))
         lay.addStretch()
 
+        # Color mode badge
+        self._mode_badge = QLabel("Grayscale")
+        self._mode_badge.setStyleSheet(f"""
+            color:{C_TEXT_SEC}; background:{C_CARD_BG};
+            border:1px solid {C_BORDER_MED};
+            border-radius:10px; padding:2px 10px;
+            font-size:{FONT_XS}px;
+        """)
+        lay.addWidget(self._mode_badge)
+
         # ROI step indicator
         self._step_pill = QLabel("")
         self._step_pill.setVisible(False)
@@ -390,18 +741,30 @@ class MedicalImageApp(QMainWindow):
         """)
         lay.addWidget(self._step_pill)
 
+        # Tour button
+        self._tour_btn = _btn_secondary("?  Guide", h=32)
+        self._tour_btn.setFixedWidth(80)
+        self._tour_btn.setToolTip("Start the guided tour")
+        lay.addWidget(self._tour_btn)
+
         self._sidebar_toggle = _btn_secondary("⇤  Hide sidebar", h=32)
         self._sidebar_toggle.setFixedWidth(134)
+        self._sidebar_toggle.setToolTip("Hide or show the control sidebar")
         self._sidebar_toggle.clicked.connect(self._toggle_sidebar)
         lay.addWidget(self._sidebar_toggle)
 
         self._right_toggle = _btn_secondary("Thumbnails  ⇥", h=32)
         self._right_toggle.setFixedWidth(124)
+        self._right_toggle.setToolTip("Hide or show the viewport thumbnails")
         self._right_toggle.clicked.connect(self._toggle_right)
         lay.addWidget(self._right_toggle)
 
         self._load_btn = _btn_primary("Load image", h=32)
+        self._load_btn.setToolTip(
+            "Load a DICOM, PNG, JPEG, BMP, or TIFF image"
+        )
         self._save_btn = _btn_secondary("Save result", h=32)
+        self._save_btn.setToolTip("Save the current processed viewport")
         lay.addWidget(self._load_btn)
         lay.addWidget(self._save_btn)
         return bar
@@ -435,39 +798,77 @@ class MedicalImageApp(QMainWindow):
 
         c = Card("Target viewport")
         self._viewport_sel = _combo(["Viewport 1", "Viewport 2"])
+        self._viewport_sel.setToolTip(
+            "Which viewport receives the processed result"
+        )
         c.add(self._viewport_sel)
         pipeline.add_card(c)
 
         c = Card("Noise")
         self._noise_type = _combo(
             ["None", "Gaussian", "Salt & Pepper", "Poisson"])
+        self._noise_type.setToolTip(
+            "Gaussian: electronic/thermal noise\n"
+            "Salt & Pepper: dead pixels / impulse noise\n"
+            "Poisson: photon shot noise (signal-dependent)"
+        )
         c.add(self._noise_type)
-        w, self._noise_strength = _slider_row("Strength", 1, 100, 25)
+        w, self._noise_strength = _slider_row(
+            "Strength", 1, 100, 25,
+            tooltip="Noise intensity — sigma for Gaussian, fraction for S&P, dose for Poisson"
+        )
         c.add(w)
         pipeline.add_card(c)
 
         c = Card("Denoising")
         self._denoise_method = _combo(
             ["None", "Median", "Bilateral", "Non-local Means"])
+        self._denoise_method.setToolTip(
+            "Median: best for salt & pepper\n"
+            "Bilateral: edge-preserving, good for Gaussian\n"
+            "Non-local Means: best detail preservation, slowest"
+        )
         c.add(self._denoise_method)
         pipeline.add_card(c)
 
         c = Card("Frequency filter")
         self._filter_type = _combo(["None", "Lowpass", "Highpass"])
+        self._filter_type.setToolTip(
+            "Butterworth filter in Fourier domain\n"
+            "Lowpass: removes high-frequency noise (blurs)\n"
+            "Highpass: enhances edges and fine detail"
+        )
         c.add(self._filter_type)
-        w, self._cutoff = _slider_row("Cutoff %", 1, 100, 50)
+        w, self._cutoff = _slider_row(
+            "Cutoff %", 1, 100, 50,
+            tooltip="Normalised cutoff frequency. Low = more aggressive filtering."
+        )
         c.add(w)
         self._filter_order = _spinbox(1, 10, 2)
+        self._filter_order.setToolTip(
+            "Butterworth order — higher = steeper roll-off, more ringing risk"
+        )
         c.add(_inline("Order", self._filter_order))
         pipeline.add_card(c)
 
         c = Card("Contrast enhancement")
         self._contrast_method = _combo(
             ["None", "Histogram equalization", "CLAHE", "Adaptive gamma"])
+        self._contrast_method.setToolTip(
+            "Histogram EQ: global, maximises contrast, amplifies noise\n"
+            "CLAHE: local per-tile, clip limit prevents noise amplification (recommended)\n"
+            "Adaptive gamma: auto brightness correction"
+        )
         c.add(self._contrast_method)
-        w, self._clahe_clip = _slider_row("CLAHE clip", 1, 50, 20)
+        w, self._clahe_clip = _slider_row(
+            "CLAHE clip", 1, 50, 20,
+            tooltip="Clip limit per tile. Low = less noise amplification. 20 = clip_limit 2.0"
+        )
         c.add(w)
-        w, self._clahe_grid = _slider_row("CLAHE grid", 2, 16, 8)
+        w, self._clahe_grid = _slider_row(
+            "CLAHE grid", 2, 16, 8,
+            tooltip="Tile grid size. Larger = more localised enhancement"
+        )
         c.add(w)
         pipeline.add_card(c)
         lay.addWidget(pipeline)
@@ -477,9 +878,18 @@ class MedicalImageApp(QMainWindow):
         view = Section("View")
         c = Card("Display settings")
         self._resolution = _combo([str(i) for i in range(1, 11)], w=60)
+        self._resolution.setToolTip(
+            "Subsampling factor. 2 = display every 2nd pixel (faster processing)"
+        )
         c.add(_inline("Resolution", self._resolution))
         self._interp = _combo(["Nearest", "Bilinear", "Cubic"], w=90)
         self._interp.setCurrentIndex(1)
+        self._interp.setToolTip(
+            "Interpolation when upscaling.\n"
+            "Nearest: crisp pixels\n"
+            "Bilinear: smooth\n"
+            "Cubic: sharpest edges"
+        )
         c.add(_inline("Interpolation", self._interp))
         view.add_card(c)
         lay.addWidget(view)
@@ -488,7 +898,7 @@ class MedicalImageApp(QMainWindow):
         # ROI & Metrics
         roi_sec = Section("ROI & Metrics")
 
-        c = Card("Guided ROI selection")
+        c = Card("Region selection")
         self._roi_status = QLabel("Load an image to start")
         self._roi_status.setWordWrap(True)
         self._roi_status.setStyleSheet(
@@ -497,22 +907,38 @@ class MedicalImageApp(QMainWindow):
         )
         c.add(self._roi_status)
 
-        # Start button + confirm button
+        hint = _lbl(
+            "Select button → drag on canvas → confirm → next ROI",
+            size=FONT_XS, color=C_TEXT_TER,
+        )
+        hint.setWordWrap(True)
+        c.add(hint)
+
+        grid = QGridLayout()
+        grid.setSpacing(5)
         self._start_roi_btn   = _btn_primary("Start ROI selection", h=28)
         self._confirm_roi_btn = _btn_primary("✓  Confirm position",  h=28)
         self._confirm_roi_btn.setVisible(False)
         self._reset_roi_btn   = _btn_secondary("Reset all ROIs",     h=28)
+        self._start_roi_btn.setToolTip(
+            "Begin guided 3-step ROI placement:\n"
+            "1. Signal A  2. Signal B  3. Noise region"
+        )
+        self._confirm_roi_btn.setToolTip(
+            "Confirm current ROI position and move to next step"
+        )
+        self._reset_roi_btn.setToolTip("Remove all ROI boxes")
         c.add(self._start_roi_btn)
         c.add(self._confirm_roi_btn)
         c.add(self._reset_roi_btn)
         roi_sec.add_card(c)
 
-        # ROI indicators — show current state of each ROI
+        # ROI indicators
         c = Card("ROI status")
         self._roi_indicators: dict[str, QLabel] = {}
         for key in ROI_ORDER:
             lbl = QLabel(f"{ROI_CFG[key]['label']}:  not set")
-            color = ROI_CFG[key]["pen"].color().name()
+            color = ROI_CFG[key]["mpl_color"]
             lbl.setStyleSheet(
                 f"color:{color}; font-size:{FONT_XS}px; background:transparent;"
             )
@@ -520,6 +946,7 @@ class MedicalImageApp(QMainWindow):
             self._roi_indicators[key] = lbl
         roi_sec.add_card(c)
 
+        # Metrics
         c = Card("Metrics")
         mr = QHBoxLayout()
         mr.setSpacing(6)
@@ -527,6 +954,14 @@ class MedicalImageApp(QMainWindow):
         self._calc_cnr_btn = _btn_primary("CNR", h=26)
         self._calc_snr_btn.setEnabled(False)
         self._calc_cnr_btn.setEnabled(False)
+        self._calc_snr_btn.setToolTip(
+            "SNR = mean(Signal A) / std(Noise)\n"
+            "Requires Signal A and Noise ROIs"
+        )
+        self._calc_cnr_btn.setToolTip(
+            "CNR = |mean(Signal A) - mean(Signal B)| / std(Noise)\n"
+            "Requires all three ROIs"
+        )
         mr.addWidget(self._calc_snr_btn)
         mr.addWidget(self._calc_cnr_btn)
         mw = QWidget()
@@ -553,7 +988,7 @@ class MedicalImageApp(QMainWindow):
         ol.addWidget(scroll)
         return outer
 
-    # ── Centre (tab bar + pyqtgraph canvas + histogram) ───────────────────────
+    # ── Centre ────────────────────────────────────────────────────────────────
 
     def _build_centre(self):
         w = QWidget()
@@ -563,36 +998,34 @@ class MedicalImageApp(QMainWindow):
         lay.setSpacing(0)
         lay.addWidget(self._build_tab_bar())
 
-        # ── pyqtgraph ImageView ────────────────────────────────────────────────
+        self._canvas_wrap = QWidget()
+        self._canvas_wrap.setStyleSheet(f"background:{C_SURFACE};")
+        cw = QVBoxLayout(self._canvas_wrap)
+        cw.setContentsMargins(0, 0, 0, 0)
+
         self._pg_view = ImageView()
-        # Strip default pyqtgraph UI elements we don't need
         self._pg_view.ui.histogram.hide()
         self._pg_view.ui.roiBtn.hide()
         self._pg_view.ui.menuBtn.hide()
         self._pg_view.ui.roiPlot.hide()
-
-        # Style the pyqtgraph canvas to match our palette
         self._pg_view.setStyleSheet(f"background:{C_SURFACE};")
         self._pg_view.getView().setBackgroundColor(C_SURFACE)
         self._pg_view.getView().setMenuEnabled(False)
 
-        self._canvas_wrap = self._pg_view
-        lay.addWidget(self._canvas_wrap, stretch=1)
+        # Lock aspect ratio so image proportions are always preserved
+        self._pg_view.getView().setAspectLocked(True)
 
-        # Draw placeholder text using a pyqtgraph TextItem
         self._placeholder = pg.TextItem(
             "Load an image to begin",
             color=C_TEXT_SEC, anchor=(0.5, 0.5),
         )
-        self._placeholder.setFont(
-            __import__("PyQt5.QtGui", fromlist=["QFont"]).QFont(
-                "sans-serif", 13
-            )
-        )
         self._pg_view.addItem(self._placeholder)
         self._placeholder.setPos(0.5, 0.5)
 
-        # ── Histogram wrap (matplotlib, hidden by default) ────────────────────
+        cw.addWidget(self._pg_view)
+        lay.addWidget(self._canvas_wrap, stretch=1)
+
+        # Histogram panel
         self._hist_wrap = QWidget()
         self._hist_wrap.setStyleSheet(f"background:{C_BG};")
         self._hist_wrap.setVisible(False)
@@ -601,30 +1034,58 @@ class MedicalImageApp(QMainWindow):
         hw.setSpacing(10)
         self._hist_fig = Figure(facecolor=C_SURFACE)
         self._hist_canvas = FigureCanvas(self._hist_fig)
+        self._hist_ax = self._hist_fig.add_subplot(111)
         hw.addWidget(self._hist_canvas, stretch=1)
 
+        # Histogram controls — source, overlay, CDF, color pickers, export
         hc = QHBoxLayout()
+        hc.setSpacing(8)
         hc.addWidget(_lbl("Source:", color=C_TEXT_SEC, size=FONT_S))
+
         self._hist_source = _combo(
             ["Original", "Viewport 1", "Viewport 2",
              "ROI — Signal A", "ROI — Signal B", "ROI — Noise"],
             w=160,
         )
+        self._hist_source.setToolTip(
+            "Choose which image or ROI region to plot"
+        )
         hc.addWidget(self._hist_source)
 
         self._compare_btn = _btn_secondary("Overlay all", h=28)
         self._compare_btn.setFixedWidth(96)
+        self._compare_btn.setToolTip(
+            "Plot Original, VP1, and VP2 on one chart"
+        )
         hc.addWidget(self._compare_btn)
 
         self._cdf_btn = _btn_secondary("Show CDF", h=28)
         self._cdf_btn.setCheckable(True)
         self._cdf_btn.setFixedWidth(88)
+        self._cdf_btn.setToolTip(
+            "Toggle cumulative distribution function overlay"
+        )
         hc.addWidget(self._cdf_btn)
+
+        # Per-series color swatches
+        hc.addWidget(_lbl("Colors:", color=C_TEXT_SEC, size=FONT_XS))
+        self._hist_swatches: dict[str, ColorSwatchBtn] = {}
+        for key, default_color in HIST_COLORS_DEFAULT.items():
+            swatch = ColorSwatchBtn(default_color)
+            swatch.setToolTip(f"Click to change {key} histogram color")
+            swatch.clicked.connect(self._on_swatch_changed)
+            hc.addWidget(swatch)
+            label = QLabel(key.replace("Viewport ", "VP"))
+            label.setStyleSheet(
+                f"color:{C_TEXT_SEC}; font-size:10px; background:transparent;"
+            )
+            hc.addWidget(label)
+            self._hist_swatches[key] = swatch
 
         self._export_hist_btn = _btn_secondary("Export PNG", h=28)
         self._export_hist_btn.setFixedWidth(96)
+        self._export_hist_btn.setToolTip("Save histogram as PNG/PDF/SVG")
         hc.addWidget(self._export_hist_btn)
-
         hc.addStretch()
         hw.addLayout(hc)
         lay.addWidget(self._hist_wrap, stretch=1)
@@ -636,14 +1097,11 @@ class MedicalImageApp(QMainWindow):
         bar.setStyleSheet(
             f"background:{C_SURFACE}; border-bottom:1px solid {C_BORDER};"
         )
-        # Use a plain QHBoxLayout with no stretch between buttons
-        # and explicit minimum widths — this is the tab clip fix
         lay = QHBoxLayout(bar)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
 
         self._tab_btns = []
-        # Explicit widths: wider than text + 32px padding each side
         tab_defs = [
             ("Original",   110),
             ("Viewport 1", 110),
@@ -656,15 +1114,13 @@ class MedicalImageApp(QMainWindow):
                 border:none;
                 border-bottom:2px solid transparent;
                 border-right:1px solid {C_BORDER};
-                border-radius:0;
-                font-size:{FONT}px;
+                border-radius:0; font-size:{FONT}px;
             }}
             QPushButton:hover {{ color:{C_TEXT}; background:{C_CARD_BG}; }}
             QPushButton:checked {{
                 color:{C_ACCENT};
                 border-bottom:2px solid {C_ACCENT};
-                font-weight:600;
-                background:{C_SURFACE};
+                font-weight:600; background:{C_SURFACE};
             }}
         """
         for i, (name, width) in enumerate(tab_defs):
@@ -672,12 +1128,11 @@ class MedicalImageApp(QMainWindow):
             btn.setCheckable(True)
             btn.setChecked(i == 0)
             btn.setFixedHeight(40)
-            btn.setFixedWidth(width)   # fixed, not minimum — cannot be squeezed
+            btn.setFixedWidth(width)
             btn.setStyleSheet(tab_style)
             btn.clicked.connect(lambda _, idx=i: self._switch_tab(idx))
             lay.addWidget(btn)
             self._tab_btns.append(btn)
-
         lay.addStretch()
         return bar
 
@@ -740,6 +1195,73 @@ class MedicalImageApp(QMainWindow):
         return w
 
     # =========================================================================
+    # Guided tour setup
+    # =========================================================================
+
+    def _setup_tour(self):
+        self._tour = GuidedTour(self)
+        # Steps are set after build_ui so widgets exist
+        # We schedule step setup after show() so geometry is available
+        QTimer.singleShot(200, self._init_tour_steps)
+        self._tour_btn.clicked.connect(self._tour.start)
+
+    def _init_tour_steps(self):
+        # Find sidebar widget for targeting
+        sidebar = self._splitter.widget(0)
+        centre  = self._splitter.widget(1)
+        right   = self._splitter.widget(2)
+
+        steps = [
+            TourStep(
+                self._load_btn,
+                "Load an image",
+                "Click here to load a DICOM, PNG, JPEG, BMP, or TIFF image. "
+                "For color images, you'll choose whether to keep color or convert to grayscale.",
+            ),
+            TourStep(
+                sidebar,
+                "Processing pipeline",
+                "The left sidebar contains all processing controls, "
+                "grouped into collapsible sections. "
+                "Click any section title to hide or show its controls.",
+            ),
+            TourStep(
+                centre,
+                "Main canvas",
+                "The main canvas shows your image. "
+                "Scroll to zoom, right-click and drag to pan. "
+                "Use the tabs above to switch between Original, processed viewports, and the Histogram.",
+            ),
+            TourStep(
+                right,
+                "Viewport thumbnails",
+                "The right panel shows live thumbnails of Viewport 1 and Viewport 2. "
+                "ROI boxes are drawn here too so you can see them at a glance.",
+            ),
+            TourStep(
+                self._start_roi_btn,
+                "ROI selection",
+                "Click 'Start ROI selection' to begin placing regions of interest. "
+                "You'll be guided through Signal A → Signal B → Noise in three steps. "
+                "Drag any box or corner to reposition after placing.",
+            ),
+            TourStep(
+                self._calc_snr_btn,
+                "Metrics",
+                "After placing ROIs, calculate SNR and CNR here. "
+                "Results are shown for the Original image and both processed viewports simultaneously.",
+            ),
+            TourStep(
+                self._tab_btns[3],
+                "Histogram tab",
+                "Switch here to analyse pixel intensity distributions. "
+                "You can plot individual images, ROI regions, CDF overlays, "
+                "and overlay all three images for comparison. Colors are customisable.",
+            ),
+        ]
+        self._tour.set_steps(steps)
+
+    # =========================================================================
     # Signal wiring
     # =========================================================================
 
@@ -758,11 +1280,9 @@ class MedicalImageApp(QMainWindow):
         self._cdf_btn.toggled.connect(self._refresh_histogram)
         self._export_hist_btn.clicked.connect(self._export_histogram)
 
-        # View — fast debounce
         for w in [self._resolution, self._interp, self._viewport_sel]:
             w.currentIndexChanged.connect(lambda: self._timer_view.start())
 
-        # Compute — slower debounce
         for w in [self._noise_type, self._denoise_method,
                   self._filter_type, self._contrast_method]:
             w.currentIndexChanged.connect(lambda: self._timer_compute.start())
@@ -772,6 +1292,12 @@ class MedicalImageApp(QMainWindow):
         self._filter_order.valueChanged.connect(
             lambda: self._timer_compute.start()
         )
+
+    def _on_swatch_changed(self):
+        """Any color swatch changed — sync to _hist_colors and refresh."""
+        for key, swatch in self._hist_swatches.items():
+            self._hist_colors[key] = swatch.color()
+        self._refresh_histogram()
 
     # =========================================================================
     # Panel toggles
@@ -826,21 +1352,24 @@ class MedicalImageApp(QMainWindow):
             self._placeholder.setVisible(True)
 
     # =========================================================================
-    # pyqtgraph image display
+    # Image display
     # =========================================================================
 
     def _show_image(self, image: np.ndarray, title: str = ""):
-        """Display a numpy uint8 array in the pyqtgraph ImageView."""
+        """Display in pyqtgraph — handles both grayscale and color."""
         self._placeholder.setVisible(False)
-        # pyqtgraph expects (rows, cols) for grayscale
-        self._pg_view.setImage(
-            image,
-            autoRange=True,
-            autoLevels=False,
-            levels=(0, 255),
-        )
-        # Remove default colourmap so it stays grayscale
-        self._pg_view.setColorMap(pg.colormap.get("grey", source="matplotlib"))
+        if image.ndim == 3:
+            # pyqtgraph color: expects (H, W, 3) with row-major
+            self._pg_view.setImage(
+                image, autoRange=True, autoLevels=True,
+            )
+        else:
+            self._pg_view.setImage(
+                image, autoRange=True, autoLevels=False, levels=(0, 255),
+            )
+            self._pg_view.setColorMap(
+                pg.colormap.get("grey", source="matplotlib")
+            )
 
     # =========================================================================
     # Processing pipeline
@@ -891,36 +1420,38 @@ class MedicalImageApp(QMainWindow):
         elif cc == "Adaptive gamma":
             img = contrast.adaptive_gamma(img)
 
-        zoom = 1  # zoom handled natively by pyqtgraph scroll
+        # Upscale back if subsampled
         imap = {"Nearest":  Image.Resampling.NEAREST,
                 "Bilinear": Image.Resampling.BILINEAR,
                 "Cubic":    Image.Resampling.BICUBIC}
-        # Interpolation applied only if resolution > 1 (upscale back)
         if scale > 1:
-            img = np.array(
-                Image.fromarray(img).resize(
-                    (self.original_image.shape[1],
-                     self.original_image.shape[0]),
+            target_size = (self.original_image.shape[1],
+                           self.original_image.shape[0])
+            if img.ndim == 3:
+                pil = Image.fromarray(img).resize(
+                    target_size,
                     imap.get(self._interp.currentText(),
-                             Image.Resampling.BILINEAR),
+                             Image.Resampling.BILINEAR)
                 )
-            )
+                img = np.array(pil)
+            else:
+                pil = Image.fromarray(img).resize(
+                    target_size,
+                    imap.get(self._interp.currentText(),
+                             Image.Resampling.BILINEAR)
+                )
+                img = np.array(pil)
 
         target = self._viewport_sel.currentIndex() + 1
         self.viewport_images[target] = img
 
-        # Always update thumbnail
+        # Update thumbnail with ROI overlays
         self._display_thumb(img, self._vp_axes[target],
-                            self._vp_canvases[target])
+                            self._vp_canvases[target],
+                            draw_rois=True)
 
-        # Update main canvas for whichever tab is currently visible
-        if self._current_tab == 0:
-            # On Original tab — don't overwrite, but show a hint
-            pass
-        elif self._current_tab == target:
+        if self._current_tab == target:
             self._show_image(img, f"Viewport {target}")
-        # If user is on a different viewport tab, don't disturb it —
-        # it will refresh when they switch to it via _switch_tab
 
         if self._current_tab == 3:
             self._refresh_histogram()
@@ -936,19 +1467,42 @@ class MedicalImageApp(QMainWindow):
         )
         if not path:
             return
+
         if path.lower().endswith(".dcm"):
             arr = pydicom.dcmread(path).pixel_array
             if arr.dtype != np.uint8:
                 mn, mx = arr.min(), arr.max()
                 arr = ((arr-mn)*255.0/max(mx-mn, 1)).astype(np.uint8)
+            # DICOM is always grayscale
             self.original_image = arr
+            self._color_mode = False
+            self._mode_badge.setText("Grayscale  (DICOM)")
         else:
-            self.original_image = np.array(Image.open(path).convert("L"))
+            raw = np.array(Image.open(path))
+            if raw.ndim == 3 and raw.shape[2] >= 3:
+                # Color image — ask user
+                rgb = raw[:, :, :3]
+                dlg = ColorModeDialog(rgb, self)
+                dlg.exec_()
+                if dlg.choice == "color":
+                    self.original_image = rgb.astype(np.uint8)
+                    self._color_mode = True
+                    self._mode_badge.setText("Color  (RGB)")
+                else:
+                    gray = to_luminance(rgb.astype(np.uint8))
+                    self.original_image = gray
+                    self._color_mode = False
+                    self._mode_badge.setText("Grayscale")
+            else:
+                # Already grayscale
+                self.original_image = raw.astype(np.uint8)
+                self._color_mode = False
+                self._mode_badge.setText("Grayscale")
 
         self._show_image(self.original_image, "Original")
         self._switch_tab(0)
         self._roi_status.setText(
-            "Click \"Start ROI selection\" to begin placing ROIs"
+            "Click 'Start ROI selection' to begin placing ROIs"
         )
         self._start_roi_btn.setEnabled(True)
 
@@ -967,24 +1521,53 @@ class MedicalImageApp(QMainWindow):
             self._roi_status.setText(f"Saved: {path.split('/')[-1]}")
 
     # =========================================================================
-    # Thumbnail display (matplotlib, right panel)
+    # Thumbnail display with ROI overlays
     # =========================================================================
 
     def _display_thumb(self, image, ax, canvas,
-                       facecolor="#0D1B1A"):
+                       facecolor="#0D1B1A", draw_rois=False):
         ax.clear()
         ax.set_facecolor(facecolor)
-        ax.imshow(image, cmap="gray", vmin=0, vmax=255)
+
+        if image.ndim == 3:
+            ax.imshow(image)
+        else:
+            ax.imshow(image, cmap="gray", vmin=0, vmax=255)
+
         ax.axis("off")
+
+        # Overlay ROI boxes if requested and any are placed
+        if draw_rois:
+            h_img, w_img = image.shape[:2]
+            for key, roi in self._pg_rois.items():
+                if not roi.placed:
+                    continue
+                try:
+                    x, y, w, ht = self._get_roi_coords(key)
+                    # Clamp to image bounds
+                    x  = max(0, min(x, w_img - 1))
+                    y  = max(0, min(y, h_img - 1))
+                    w  = max(1, min(w,  w_img - x))
+                    ht = max(1, min(ht, h_img - y))
+                    rect = MplRect(
+                        (x, y), w, ht,
+                        linewidth=1.5,
+                        edgecolor=ROI_CFG[key]["mpl_color"],
+                        facecolor="none",
+                        linestyle="--",
+                    )
+                    ax.add_patch(rect)
+                except Exception:
+                    pass
+
         canvas.figure.tight_layout(pad=0.1)
         canvas.draw()
 
     # =========================================================================
-    # Guided ROI workflow
+    # ROI workflow
     # =========================================================================
 
     def _start_roi_workflow(self):
-        """Begin guided workflow from step 0 (Signal A)."""
         if self.original_image is None:
             return
         self._reset_rois()
@@ -992,16 +1575,14 @@ class MedicalImageApp(QMainWindow):
         self._place_roi_for_step()
 
     def _place_roi_for_step(self):
-        """Place a RectROI for the current step and update UI."""
         if self._roi_step >= len(ROI_ORDER):
             self._finish_roi_workflow()
             return
 
-        key   = ROI_ORDER[self._roi_step]
-        cfg   = ROI_CFG[key]
-        h, w  = self.original_image.shape
+        key  = ROI_ORDER[self._roi_step]
+        cfg  = ROI_CFG[key]
+        h, w = self.original_image.shape[:2]
 
-        # Place ROI in centre of image, sized ~15% of image dimensions
         rw = max(int(w * 0.15), 20)
         rh = max(int(h * 0.15), 20)
         x0 = (w - rw) // 2
@@ -1009,17 +1590,15 @@ class MedicalImageApp(QMainWindow):
 
         roi = RectROI(
             [x0, y0], [rw, rh],
-            pen=cfg["pen"],
-            hoverPen=cfg["hpen"],
-            handlePen=cfg["pen"],
-            handleHoverPen=cfg["hpen"],
-            removable=False,
-            rotatable=False,
+            pen=cfg["pen"], hoverPen=cfg["hpen"],
+            handlePen=cfg["pen"], handleHoverPen=cfg["hpen"],
+            removable=False, rotatable=False,
         )
+        # Mark as placed immediately so thumbnails draw it
+        roi.placed = True
         self._pg_view.addItem(roi)
         self._pg_rois[key] = roi
 
-        # Update UI
         label = cfg["label"]
         self._roi_status.setText(
             f"Step {self._roi_step + 1}/3:  Position the {label} box, "
@@ -1031,11 +1610,8 @@ class MedicalImageApp(QMainWindow):
         self._start_roi_btn.setVisible(False)
 
     def _confirm_roi_step(self):
-        """User confirmed current ROI — advance to next step."""
         if self._roi_step < len(ROI_ORDER):
             key = ROI_ORDER[self._roi_step]
-            # Mark indicator as set
-            color = ROI_CFG[key]["pen"].color().name()
             x, y, w, h = self._get_roi_coords(key)
             self._roi_indicators[key].setText(
                 f"{ROI_CFG[key]['label']}:  ({x}, {y})  {w}×{h}px  ✓"
@@ -1044,9 +1620,8 @@ class MedicalImageApp(QMainWindow):
             self._place_roi_for_step()
 
     def _finish_roi_workflow(self):
-        """All three ROIs confirmed — enable metrics."""
         self._roi_status.setText(
-            "All ROIs set. Adjust positions by dragging boxes or handles, "
+            "All ROIs set. Drag boxes or handles to adjust, "
             "then calculate SNR / CNR."
         )
         self._step_pill.setVisible(False)
@@ -1056,8 +1631,16 @@ class MedicalImageApp(QMainWindow):
         self._calc_snr_btn.setEnabled(True)
         self._calc_cnr_btn.setEnabled(True)
 
+        # Refresh thumbnails to show all ROI boxes
+        for i in [1, 2]:
+            if self.viewport_images[i] is not None:
+                self._display_thumb(
+                    self.viewport_images[i],
+                    self._vp_axes[i], self._vp_canvases[i],
+                    draw_rois=True,
+                )
+
     def _reset_rois(self):
-        """Remove all ROIs from the pyqtgraph view and reset state."""
         for roi in self._pg_rois.values():
             try:
                 self._pg_view.removeItem(roi)
@@ -1078,55 +1661,61 @@ class MedicalImageApp(QMainWindow):
             )
         self._roi_status.setText("ROIs cleared")
 
+        # Refresh thumbnails to remove ROI overlays
+        for i in [1, 2]:
+            if self.viewport_images[i] is not None:
+                self._display_thumb(
+                    self.viewport_images[i],
+                    self._vp_axes[i], self._vp_canvases[i],
+                    draw_rois=False,
+                )
+
     def _get_roi_coords(self, key: str):
-        """
-        Returns (x, y, w, h) in image pixel coordinates for the named ROI.
-        pyqtgraph RectROI pos() is (col, row) = (x, y).
-        """
         roi = self._pg_rois.get(key)
         if roi is None:
             return 0, 0, 1, 1
         pos  = roi.pos()
         size = roi.size()
-        x = max(0, int(pos.x()))
-        y = max(0, int(pos.y()))
-        w = max(1, int(size.x()))
-        h = max(1, int(size.y()))
-        return x, y, w, h
+        return (max(0, int(pos.x())),  max(0, int(pos.y())),
+                max(1, int(size.x())), max(1, int(size.y())))
 
     # =========================================================================
-    # SNR / CNR
+    # SNR / CNR  (uses luminance channel for color images)
     # =========================================================================
 
     def _roi_pixels(self, image: np.ndarray, key: str) -> np.ndarray:
-        """
-        Extract pixels under a ROI using pyqtgraph's own coordinate mapping.
-        getArrayRegion handles axis order, zoom, and pan correctly.
-        Falls back to manual slice if something goes wrong.
-        """
         roi = self._pg_rois.get(key)
         if roi is None:
-            return np.array([0], dtype=np.uint8)
+            return np.array([0.0])
+
+        # For color images, extract luminance before measuring
+        if image.ndim == 3:
+            meas_image = to_luminance(image)
+        else:
+            meas_image = image
+
         try:
             img_item = self._pg_view.getImageItem()
-            region = roi.getArrayRegion(image, img_item)
+            region   = roi.getArrayRegion(meas_image, img_item)
             if region is not None and region.size > 0:
                 return region.astype(np.float32)
         except Exception:
             pass
-        # Fallback: manual slice with clamped coords
+
+        # Fallback
         x, y, w, h = self._get_roi_coords(key)
-        H, W = image.shape
+        H, W = meas_image.shape[:2]
         x2 = min(x + w, W)
         y2 = min(y + h, H)
-        region = image[y:y2, x:x2]
+        region = meas_image[y:y2, x:x2]
         return region.astype(np.float32) if region.size > 0 else np.array([0.0])
 
     def _calculate_snr(self):
         if "signal_a" not in self._pg_rois or "noise" not in self._pg_rois:
             self._metric_display.setText("Complete ROI selection first")
             return
-        lines = ["SNR"]
+        note = "  (luminance channel)" if self._color_mode else ""
+        lines = [f"SNR{note}"]
         for label, img in [("Original",   self.original_image),
                             ("Viewport 1", self.viewport_images[1]),
                             ("Viewport 2", self.viewport_images[2])]:
@@ -1141,7 +1730,8 @@ class MedicalImageApp(QMainWindow):
         if not all(k in self._pg_rois for k in ROI_ORDER):
             self._metric_display.setText("Complete ROI selection first")
             return
-        lines = ["CNR"]
+        note = "  (luminance channel)" if self._color_mode else ""
+        lines = [f"CNR{note}"]
         for label, img in [("Original",   self.original_image),
                             ("Viewport 1", self.viewport_images[1]),
                             ("Viewport 2", self.viewport_images[2])]:
@@ -1154,14 +1744,10 @@ class MedicalImageApp(QMainWindow):
         self._metric_display.setText("\n".join(lines))
 
     # =========================================================================
-    # Histogram (matplotlib) — full image, ROI, CDF, overlay, export
+    # Histogram
     # =========================================================================
 
-    def _get_hist_pixels(self, source: str) -> tuple[np.ndarray | None, str]:
-        """
-        Returns (pixel_array, label) for the given source string.
-        Handles both whole-image sources and ROI sources.
-        """
+    def _get_hist_pixels(self, source: str):
         img_map = {
             "Original":   self.original_image,
             "Viewport 1": self.viewport_images[1],
@@ -1172,79 +1758,19 @@ class MedicalImageApp(QMainWindow):
             "ROI — Signal B": "signal_b",
             "ROI — Noise":    "noise",
         }
-
         if source in img_map:
             return img_map[source], source
-
         if source in roi_map:
             key = roi_map[source]
             if key not in self._pg_rois:
                 return None, source
-            # Use the current tab's image as the base
-            tab_img_map = {
-                0: self.original_image,
-                1: self.viewport_images[1],
-                2: self.viewport_images[2],
-            }
-            base = tab_img_map.get(self._current_tab, self.original_image)
-            if base is None:
-                base = self.original_image
+            base = self.original_image
             if base is None:
                 return None, source
             region = self._roi_pixels(base, key)
-            return region.astype(np.uint8) if region is not None else None, source
-
+            return (region.astype(np.uint8)
+                    if region is not None else None), source
         return None, source
-
-    def _plot_histogram_on_ax(
-        self,
-        ax,
-        pixels: np.ndarray,
-        label: str,
-        color: str,
-        show_cdf: bool,
-        alpha: float = 0.72,
-        lw: float = 0,
-    ):
-        """
-        Plot a histogram (and optionally its CDF) on the given axes.
-        Uses a twin axis for the CDF so scales don't collide.
-        """
-        flat = pixels.flatten().astype(np.float32)
-        hist, bins = np.histogram(flat, bins=256, range=(0, 255))
-
-        if show_cdf:
-            # Main axis: histogram (bar or line)
-            ax.bar(bins[:-1], hist, width=1, color=color,
-                   alpha=alpha, linewidth=lw, label=f"{label} histogram")
-
-            # Twin axis: CDF
-            ax2 = ax.twinx()
-            cdf = np.cumsum(hist).astype(np.float64)
-            cdf = cdf / cdf[-1] * 100.0   # normalise to %
-            ax2.plot(bins[:-1], cdf, color=color,
-                     linewidth=1.5, linestyle="--",
-                     alpha=0.85, label=f"{label} CDF")
-            ax2.set_ylabel("Cumulative %", color=C_TEXT_SEC, fontsize=10)
-            ax2.tick_params(colors=C_TEXT_SEC, labelsize=9)
-            ax2.set_ylim(0, 105)
-            ax2.spines["right"].set_color(C_BORDER_MED)
-            for sp in ["top", "left", "bottom"]:
-                ax2.spines[sp].set_visible(False)
-            return ax2
-        else:
-            ax.bar(bins[:-1], hist, width=1, color=color,
-                   alpha=alpha, linewidth=lw, label=label)
-            return None
-
-    def _style_hist_ax(self, ax, title: str):
-        ax.set_xlabel("Pixel intensity", color=C_TEXT_SEC, fontsize=11)
-        ax.set_ylabel("Frequency",       color=C_TEXT_SEC, fontsize=11)
-        ax.set_title(title,              color=C_TEXT,     fontsize=11)
-        ax.tick_params(colors=C_TEXT_SEC, labelsize=10)
-        for sp in ax.spines.values():
-            sp.set_color(C_BORDER)
-        ax.grid(True, alpha=0.3, color=C_BORDER)
 
     def _refresh_histogram(self):
         src      = self._hist_source.currentText()
@@ -1254,94 +1780,122 @@ class MedicalImageApp(QMainWindow):
         if pixels is None:
             return
 
-        self._hist_fig.clear()
+        self._hist_ax.clear()
         self._hist_fig.patch.set_facecolor(C_SURFACE)
-        ax = self._hist_fig.add_subplot(111)
-        ax.set_facecolor(C_SURFACE)
+        self._hist_ax.set_facecolor(C_SURFACE)
 
-        flat = pixels.flatten()
-        mean_v = flat.mean()
-        std_v  = flat.std()
-        min_v  = int(flat.min())
-        max_v  = int(flat.max())
+        color = self._hist_colors.get(src, C_ACCENT)
+        flat  = pixels.flatten().astype(np.float32)
 
-        self._plot_histogram_on_ax(
-            ax, pixels, label, C_ACCENT, show_cdf
-        )
+        # For color images plot per-channel R/G/B lines
+        if self._color_mode and pixels.ndim == 3 and "ROI" not in src:
+            ch_colors = ["#C62828", "#2E7D32", "#1565C0"]
+            ch_names  = ["R", "G", "B"]
+            ax2 = None
+            for c, (col, name) in enumerate(zip(ch_colors, ch_names)):
+                ch   = pixels[:, :, c].flatten().astype(np.float32)
+                hist, bins = np.histogram(ch, bins=256, range=(0, 255))
+                self._hist_ax.plot(bins[:-1], hist, color=col,
+                                   label=name, linewidth=1.5, alpha=0.85)
+                if show_cdf:
+                    if ax2 is None:
+                        ax2 = self._hist_ax.twinx()
+                        ax2.set_ylabel("Cumulative %",
+                                       color=C_TEXT_SEC, fontsize=10)
+                        ax2.tick_params(colors=C_TEXT_SEC, labelsize=9)
+                        ax2.set_ylim(0, 105)
+                    cdf = np.cumsum(hist).astype(np.float64)
+                    cdf = cdf / cdf[-1] * 100.0
+                    ax2.plot(bins[:-1], cdf, color=col,
+                             linewidth=1, linestyle="--", alpha=0.6)
+            self._hist_ax.legend(fontsize=10)
+            title = f"{label}  (R/G/B channels)"
+        else:
+            hist, bins = np.histogram(flat, bins=256, range=(0, 255))
+            self._hist_ax.bar(bins[:-1], hist, width=1,
+                              color=color, alpha=0.72, linewidth=0)
+            if show_cdf:
+                ax2 = self._hist_ax.twinx()
+                cdf = np.cumsum(hist).astype(np.float64)
+                cdf = cdf / cdf[-1] * 100.0
+                ax2.plot(bins[:-1], cdf, color=color,
+                         linewidth=1.5, linestyle="--", alpha=0.85)
+                ax2.set_ylabel("Cumulative %", color=C_TEXT_SEC, fontsize=10)
+                ax2.tick_params(colors=C_TEXT_SEC, labelsize=9)
+                ax2.set_ylim(0, 105)
+            title = (f"{label}   mean {flat.mean():.1f}   "
+                     f"std {flat.std():.1f}   "
+                     f"[{int(flat.min())}, {int(flat.max())}]")
 
-        cdf_note = "  +CDF" if show_cdf else ""
-        is_roi   = src.startswith("ROI")
-        roi_note = "  [ROI region]" if is_roi else ""
-        title    = (
-            f"{label}{roi_note}{cdf_note}   "
-            f"mean {mean_v:.1f}   std {std_v:.1f}   "
-            f"[{min_v}, {max_v}]"
-        )
-        self._style_hist_ax(ax, title)
+        self._hist_ax.set_xlabel("Pixel intensity",
+                                  color=C_TEXT_SEC, fontsize=11)
+        self._hist_ax.set_ylabel("Frequency", color=C_TEXT_SEC, fontsize=11)
+        self._hist_ax.set_title(title, color=C_TEXT, fontsize=11)
+        self._hist_ax.tick_params(colors=C_TEXT_SEC, labelsize=10)
+        for sp in self._hist_ax.spines.values():
+            sp.set_color(C_BORDER)
+        self._hist_ax.grid(True, alpha=0.35, color=C_BORDER)
         self._hist_fig.tight_layout(pad=1.2)
         self._hist_canvas.draw()
 
     def _compare_histograms(self):
-        """Overlay whole-image histograms for Original, VP1, VP2."""
         show_cdf = self._cdf_btn.isChecked()
-
-        self._hist_fig.clear()
+        self._hist_ax.clear()
         self._hist_fig.patch.set_facecolor(C_SURFACE)
-        ax = self._hist_fig.add_subplot(111)
-        ax.set_facecolor(C_SURFACE)
+        self._hist_ax.set_facecolor(C_SURFACE)
 
-        cfg = {
-            "Original":   (C_TEXT,    1.8),
-            "Viewport 1": (C_ACCENT,  1.5),
-            "Viewport 2": ("#1565C0", 1.5),
-        }
         img_map = {
             "Original":   self.original_image,
             "Viewport 1": self.viewport_images[1],
             "Viewport 2": self.viewport_images[2],
         }
         plotted = False
+        ax2 = None
         for label, img in img_map.items():
-            if img is None:
-                continue
-            color, lw = cfg[label]
-            hist, bins = np.histogram(
-                img.flatten(), bins=256, range=(0, 255))
+            if img is None: continue
+            color = self._hist_colors.get(label, C_ACCENT)
+            # For color images use luminance for overlay comparison
+            arr = to_luminance(img) if img.ndim == 3 else img
+            hist, bins = np.histogram(arr.flatten(), bins=256, range=(0, 255))
+            self._hist_ax.plot(bins[:-1], hist, color=color,
+                               label=label, linewidth=1.5, alpha=0.85)
             if show_cdf:
-                ax.plot(bins[:-1], hist, color=color,
-                        label=f"{label} hist", linewidth=lw, alpha=0.6)
+                if ax2 is None:
+                    ax2 = self._hist_ax.twinx()
+                    ax2.set_ylabel("Cumulative %",
+                                   color=C_TEXT_SEC, fontsize=10)
+                    ax2.tick_params(colors=C_TEXT_SEC, labelsize=9)
+                    ax2.set_ylim(0, 105)
                 cdf = np.cumsum(hist).astype(np.float64)
                 cdf = cdf / cdf[-1] * 100.0
-                ax2 = ax.twinx()
                 ax2.plot(bins[:-1], cdf, color=color,
-                         linewidth=1.5, linestyle="--",
-                         alpha=0.85, label=f"{label} CDF")
-                ax2.set_ylabel("Cumulative %",
-                                color=C_TEXT_SEC, fontsize=10)
-                ax2.tick_params(colors=C_TEXT_SEC, labelsize=9)
-                ax2.set_ylim(0, 105)
-            else:
-                ax.plot(bins[:-1], hist, color=color,
-                        label=label, linewidth=lw, alpha=0.85)
+                         linewidth=1, linestyle="--", alpha=0.7)
             plotted = True
 
         if plotted:
-            ax.legend(fontsize=10, framealpha=0.9)
-            cdf_note = " + CDF" if show_cdf else ""
-            self._style_hist_ax(ax, f"Histogram overlay{cdf_note}")
+            self._hist_ax.legend(fontsize=10, framealpha=0.9)
+            note = " + CDF" if show_cdf else ""
+            self._hist_ax.set_xlabel("Pixel intensity",
+                                      color=C_TEXT_SEC, fontsize=11)
+            self._hist_ax.set_ylabel("Frequency",
+                                      color=C_TEXT_SEC, fontsize=11)
+            self._hist_ax.set_title(f"Histogram overlay{note}",
+                                     color=C_TEXT, fontsize=11)
+            self._hist_ax.tick_params(colors=C_TEXT_SEC, labelsize=10)
+            for sp in self._hist_ax.spines.values():
+                sp.set_color(C_BORDER)
+            self._hist_ax.grid(True, alpha=0.35, color=C_BORDER)
             self._hist_fig.tight_layout(pad=1.2)
             self._hist_canvas.draw()
 
     def _export_histogram(self):
-        """Save the current histogram figure as a PNG."""
         path, _ = QFileDialog.getSaveFileName(
             self, "Export histogram", "histogram.png",
             "PNG (*.png);;PDF (*.pdf);;SVG (*.svg)",
         )
         if path:
             self._hist_fig.savefig(
-                path, dpi=150, bbox_inches="tight",
-                facecolor=C_SURFACE,
+                path, dpi=150, bbox_inches="tight", facecolor=C_SURFACE,
             )
             self._roi_status.setText(
                 f"Histogram exported: {path.split('/')[-1]}"
