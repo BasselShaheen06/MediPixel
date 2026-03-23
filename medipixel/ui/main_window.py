@@ -13,6 +13,8 @@ New in this version:
 
 import numpy as np
 import pydicom
+import re
+from pathlib import Path
 from PIL import Image
 
 import pyqtgraph as pg
@@ -25,7 +27,7 @@ from PyQt5.QtWidgets import (
     QColorDialog, QApplication,
 )
 from PyQt5.QtCore import Qt, QTimer, QSettings, QRect, QPoint
-from PyQt5.QtGui import QColor, QPainter, QPen, QFont
+from PyQt5.QtGui import QColor, QPainter, QPen, QFont, QFontDatabase
 
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -81,6 +83,16 @@ SIDEBAR_W    = 272
 RIGHT_W      = 286
 DEBOUNCE_VIEW    = 30
 DEBOUNCE_COMPUTE = 120
+
+APP_FONT_CHOICES = [
+    "IBM Plex Serif",
+    "Passero One",
+    "Silkscreen",
+    "Bitcount Prop Single Ink",
+]
+FONT_SCALE_MIN = 70
+FONT_SCALE_MAX = 170
+FONT_SCALE_DEFAULT = 100
 
 
 # =============================================================================
@@ -478,30 +490,46 @@ class GuidedTour(QWidget):
         self._steps: list[TourStep] = []
         self._idx   = 0
         self._active = False
+        self._overlay_alpha = 112
 
         # Popup card
         self._popup = QWidget(self)
         self._popup.setStyleSheet(f"""
             QWidget {{
                 background:{C_SURFACE};
-                border:2px solid {C_ACCENT};
+                border:1px solid {C_BORDER_MED};
                 border-radius:12px;
             }}
         """)
-        self._popup.setFixedWidth(320)
+        self._popup.setFixedWidth(350)
         pl = QVBoxLayout(self._popup)
         pl.setContentsMargins(20, 18, 20, 18)
-        pl.setSpacing(10)
+        pl.setSpacing(12)
 
         self._tour_title = QLabel()
         self._tour_title.setStyleSheet(
-            f"color:{C_ACCENT}; font-size:14px; font-weight:700; background:transparent;"
+            f"color:{C_ACCENT}; font-size:17px; font-weight:800; background:transparent;"
         )
+        self._tour_title.setWordWrap(True)
+
+        self._msg_frame = QFrame()
+        self._msg_frame.setStyleSheet(f"""
+            QFrame {{
+                background:{C_CARD_BG};
+                border:1px solid {C_BORDER_MED};
+                border-radius:10px;
+            }}
+        """)
+        msg_lay = QVBoxLayout(self._msg_frame)
+        msg_lay.setContentsMargins(14, 10, 14, 10)
+        msg_lay.setSpacing(0)
+
         self._tour_text = QLabel()
         self._tour_text.setWordWrap(True)
         self._tour_text.setStyleSheet(
             f"color:{C_TEXT}; font-size:12px; background:transparent; line-height:1.5;"
         )
+        msg_lay.addWidget(self._tour_text)
 
         nav = QHBoxLayout()
         self._skip_btn = QPushButton("Skip tour")
@@ -532,7 +560,7 @@ class GuidedTour(QWidget):
         nav.addWidget(self._next_btn)
 
         pl.addWidget(self._tour_title)
-        pl.addWidget(self._tour_text)
+        pl.addWidget(self._msg_frame)
         pl.addLayout(nav)
 
         self._skip_btn.clicked.connect(self.end)
@@ -579,8 +607,8 @@ class GuidedTour(QWidget):
 
     def _position_popup(self, target: QWidget):
         self._popup.adjustSize()
-        # Map target widget to tour overlay coordinates
-        pos  = target.mapTo(self.parent(), QPoint(0, 0))
+        # Map target coordinates via global space (safe for non-ancestor widgets).
+        pos  = self.mapFromGlobal(target.mapToGlobal(QPoint(0, 0)))
         rect = QRect(pos, target.size())
 
         pw = self._popup.width()
@@ -604,29 +632,44 @@ class GuidedTour(QWidget):
 
     def paintEvent(self, event):
         if not self._active or not self._steps:
+            super().paintEvent(event)
             return
+
         step = self._steps[self._idx]
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        # Dim overlay — subtle, not claustrophobic
-        painter.fillRect(self.rect(), QColor(0, 0, 0, 70))
+        pos = self.mapFromGlobal(step.target.mapToGlobal(QPoint(0, 0)))
+        rect = QRect(pos.x() - 6, pos.y() - 6,
+                     step.target.width() + 12, step.target.height() + 12)
+        rect = rect.intersected(self.rect())
 
-        # Cut out target widget
-        pos  = step.target.mapTo(self.parent(), QPoint(0, 0))
-        rect = QRect(pos.x() - 4, pos.y() - 4,
-                     step.target.width() + 8, step.target.height() + 8)
-        painter.setCompositionMode(QPainter.CompositionMode_Clear)
-        painter.fillRect(rect, QColor(0, 0, 0, 0))
-        painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
+        dim = QColor(0, 0, 0, self._overlay_alpha)
+        if rect.isValid() and not rect.isNull():
+            top_h = max(0, rect.top())
+            left_w = max(0, rect.left())
+            right_x = rect.right() + 1
+            right_w = max(0, self.width() - right_x)
+            bottom_y = rect.bottom() + 1
+            bottom_h = max(0, self.height() - bottom_y)
 
-        # Accent border around target
-        pen = QPen(QColor(C_ACCENT), 2)
+            painter.fillRect(0, 0, self.width(), top_h, dim)
+            painter.fillRect(0, rect.top(), left_w, rect.height(), dim)
+            painter.fillRect(right_x, rect.top(), right_w, rect.height(), dim)
+            painter.fillRect(0, bottom_y, self.width(), bottom_h, dim)
+        else:
+            painter.fillRect(self.rect(), dim)
+
+        pen = QPen(QColor(C_ACCENT_L), 2)
         painter.setPen(pen)
-        painter.drawRoundedRect(rect, 6, 6)
+        painter.drawRoundedRect(rect, 8, 8)
 
     def resizeEvent(self, event):
-        self.resize(self.parent().size())
+        parent = self.parentWidget()
+        if parent is not None and self.size() != parent.size():
+            self.resize(parent.size())
+        super().resizeEvent(event)
+
 
 
 # =============================================================================
@@ -669,6 +712,7 @@ class MedicalImageApp(QMainWindow):
         self._build_ui()
         self._connect_signals()
         self._setup_tour()
+        self._init_font_preference()
 
         # Auto-show tour on first launch
         settings = QSettings("MediPixel", "MediPixel")
@@ -718,6 +762,20 @@ class MedicalImageApp(QMainWindow):
         lay.addWidget(_lbl("·", size=15, color=C_TEXT_TER))
         lay.addWidget(_lbl("Medical Image Processing Workstation",
                            size=FONT_S, color=C_TEXT_SEC))
+
+        self._font_sel = _combo(APP_FONT_CHOICES, w=170)
+        self._font_sel.setToolTip("Choose app font family")
+        lay.addWidget(self._font_sel)
+
+        self._font_scale = _spinbox(
+            FONT_SCALE_MIN, FONT_SCALE_MAX, FONT_SCALE_DEFAULT, w=64
+        )
+        self._font_scale.setSuffix("%")
+        self._font_scale.setToolTip(
+            "Scale all UI font sizes proportionally"
+        )
+        lay.addWidget(_lbl("Font", size=FONT_XS, color=C_TEXT_SEC))
+        lay.addWidget(self._font_scale)
         lay.addStretch()
 
         # Color mode badge
@@ -1233,49 +1291,46 @@ class MedicalImageApp(QMainWindow):
         steps = [
             TourStep(
                 self._load_btn,
-                "Load an image",
-                "Click here to load a DICOM, PNG, JPEG, BMP, or TIFF image. "
-                "For color images, you'll choose whether to keep color or convert to grayscale.",
+                "Welcome! Start By Loading An Image",
+                "Click here to open a DICOM, PNG, JPEG, BMP, or TIFF image. "
+                "If your image is color, MediPixel will help you choose color or grayscale in one step.",
             ),
             TourStep(
                 sidebar,
-                "Processing pipeline",
-                "The left sidebar contains all processing controls, "
-                "grouped into collapsible sections. "
-                "Click any section title to hide or show its controls.",
+                "Processing Pipeline",
+                "This left panel is your workflow hub. "
+                "Controls are grouped in sections, and you can collapse any section to keep things clean.",
             ),
             TourStep(
                 centre,
                 "Main canvas",
-                "The main canvas shows your image. "
-                "Scroll to zoom, right-click and drag to pan. "
-                "Use the tabs above to switch between Original, processed viewports, and the Histogram.",
+                "This is your main viewing area. "
+                "Use the mouse wheel to zoom and right-click drag to pan. "
+                "Tabs above let you move between Original, processed viewports, and Histogram.",
             ),
             TourStep(
                 right,
-                "Viewport thumbnails",
-                "The right panel shows live thumbnails of Viewport 1 and Viewport 2. "
-                "ROI boxes are drawn here too so you can see them at a glance.",
+                "Viewport Thumbnails",
+                "Here you can quickly compare Viewport 1 and Viewport 2 side by side. "
+                "ROI overlays also appear here for a fast visual check.",
             ),
             TourStep(
                 self._start_roi_btn,
-                "ROI selection",
-                "Click 'Start ROI selection' to begin placing regions of interest. "
-                "You'll be guided through Signal A → Signal B → Noise in three steps. "
-                "Drag any box or corner to reposition after placing.",
+                "ROI Selection",
+                "Click Start ROI selection and follow the guided steps: Signal A, Signal B, then Noise. "
+                "You can drag each ROI box or its corners anytime to fine-tune placement.",
             ),
             TourStep(
                 self._calc_snr_btn,
                 "Metrics",
-                "After placing ROIs, calculate SNR and CNR here. "
-                "Results are shown for the Original image and both processed viewports simultaneously.",
+                "After ROI placement, compute SNR and CNR from here. "
+                "Results are shown together for the Original image and both processed viewports.",
             ),
             TourStep(
                 self._tab_btns[3],
-                "Histogram tab",
-                "Switch here to analyse pixel intensity distributions. "
-                "You can plot individual images, ROI regions, CDF overlays, "
-                "and overlay all three images for comparison. Colors are customisable.",
+                "Histogram Tab",
+                "Use this tab to explore intensity distributions. "
+                "You can inspect full images or ROIs, enable CDF, and overlay all series for comparison.",
             ),
         ]
         self._tour.set_steps(steps)
@@ -1287,6 +1342,8 @@ class MedicalImageApp(QMainWindow):
     def _connect_signals(self):
         self._load_btn.clicked.connect(self._load_image)
         self._save_btn.clicked.connect(self._save_result)
+        self._font_sel.currentTextChanged.connect(self._on_font_family_changed)
+        self._font_scale.valueChanged.connect(self._on_font_scale_changed)
 
         self._start_roi_btn.clicked.connect(self._start_roi_workflow)
         self._confirm_roi_btn.clicked.connect(self._confirm_roi_step)
@@ -1317,6 +1374,149 @@ class MedicalImageApp(QMainWindow):
         for key, swatch in self._hist_swatches.items():
             self._hist_colors[key] = swatch.color()
         self._refresh_histogram()
+
+    def _norm_font_name(self, name: str) -> str:
+        return re.sub(r"[^a-z0-9]", "", name.lower())
+
+    def _ensure_local_fonts_loaded(self):
+        if getattr(self, "_local_fonts_loaded", False):
+            return
+
+        root = Path(__file__).resolve().parents[2]
+        fonts_dir = root / "assets" / "fonts"
+        if fonts_dir.exists():
+            for p in fonts_dir.rglob("*"):
+                if p.is_file() and p.suffix.lower() in {".ttf", ".otf"}:
+                    QFontDatabase.addApplicationFont(str(p))
+
+        self._local_fonts_loaded = True
+
+    def _resolve_font_family(self, requested: str) -> str | None:
+        self._ensure_local_fonts_loaded()
+        families = list(QFontDatabase().families())
+        if requested in families:
+            return requested
+
+        req_n = self._norm_font_name(requested)
+        # First try direct fuzzy contains match.
+        for fam in families:
+            fam_n = self._norm_font_name(fam)
+            if req_n and (req_n in fam_n or fam_n in req_n):
+                return fam
+
+        # Bitcount variable fonts may expose variant family names.
+        if "bitcount" in req_n:
+            for fam in families:
+                if "bitcount" in self._norm_font_name(fam):
+                    return fam
+        return None
+
+    def _scale_stylesheet_fonts(self, stylesheet: str, scale: float) -> str:
+        if not stylesheet:
+            return stylesheet
+
+        def _repl(match):
+            v = float(match.group(1))
+            sv = max(6.0, v * scale)
+            sval = f"{sv:.1f}".rstrip("0").rstrip(".")
+            return f"font-size:{sval}px"
+
+        return re.sub(
+            r"font-size\s*:\s*(\d+(?:\.\d+)?)px",
+            _repl,
+            stylesheet,
+            flags=re.IGNORECASE,
+        )
+
+    def _apply_font_scale(self, scale_pct: int, save: bool = True):
+        app = QApplication.instance()
+        if app is None:
+            return
+
+        scale_pct = max(FONT_SCALE_MIN, min(FONT_SCALE_MAX, int(scale_pct)))
+        scale = scale_pct / 100.0
+
+        widgets = [self] + self.findChildren(QWidget)
+        for w in widgets:
+            base_ss = w.property("_base_stylesheet")
+            if base_ss is None:
+                base_ss = w.styleSheet()
+                w.setProperty("_base_stylesheet", base_ss)
+            w.setStyleSheet(self._scale_stylesheet_fonts(base_ss, scale))
+
+            base_pt = w.property("_base_point_size")
+            if base_pt is None:
+                pt = w.font().pointSizeF()
+                base_pt = pt if pt > 0 else 10.0
+                w.setProperty("_base_point_size", float(base_pt))
+
+            f = QFont(w.font())
+            f.setPointSizeF(float(base_pt) * scale)
+            w.setFont(f)
+
+        if save:
+            QSettings("MediPixel", "MediPixel").setValue(
+                "font_scale_pct", scale_pct
+            )
+
+    def _apply_font_family(self, family: str, save: bool = True):
+        app = QApplication.instance()
+        if app is None:
+            return
+        resolved = self._resolve_font_family(family)
+        if resolved is None:
+            return
+
+        base_size = app.font().pointSize() if app.font().pointSize() > 0 else 10
+        font = QFont(resolved, base_size)
+        app.setStyleSheet(
+            f"QWidget {{ font-family: '{resolved}', 'Segoe UI', sans-serif; }}"
+        )
+        app.setFont(font)
+
+        self.setFont(font)
+        for child in self.findChildren(QWidget):
+            child.setFont(font)
+
+        # Reapply size scaling after family switch.
+        self._apply_font_scale(self._font_scale.value(), save=False)
+
+        if save:
+            QSettings("MediPixel", "MediPixel").setValue("font_family", resolved)
+
+    def _on_font_family_changed(self, family: str):
+        self._apply_font_family(family, save=True)
+
+    def _on_font_scale_changed(self, value: int):
+        self._apply_font_scale(value, save=True)
+
+    def _init_font_preference(self):
+        settings = QSettings("MediPixel", "MediPixel")
+        saved_family = settings.value("font_family", "IBM Plex Serif")
+        saved_scale = settings.value("font_scale_pct", FONT_SCALE_DEFAULT)
+
+        self._font_sel.blockSignals(True)
+        self._font_scale.blockSignals(True)
+
+        if isinstance(saved_family, str):
+            resolved = self._resolve_font_family(saved_family)
+            if resolved:
+                for i in range(self._font_sel.count()):
+                    txt = self._font_sel.itemText(i)
+                    if self._resolve_font_family(txt) == resolved:
+                        self._font_sel.setCurrentIndex(i)
+                        break
+
+        try:
+            self._font_scale.setValue(int(saved_scale))
+        except Exception:
+            self._font_scale.setValue(FONT_SCALE_DEFAULT)
+
+        self._font_sel.blockSignals(False)
+        self._font_scale.blockSignals(False)
+
+        self._apply_font_family(self._font_sel.currentText(), save=False)
+        self._apply_font_scale(self._font_scale.value(), save=False)
 
     # =========================================================================
     # Panel toggles
@@ -1798,6 +1998,15 @@ class MedicalImageApp(QMainWindow):
         else:
             self._refresh_histogram()
 
+    def _prepare_hist_axes(self):
+        """Reset histogram axes, including any previous twinx CDF axis."""
+        for ax in list(self._hist_fig.axes):
+            if ax is not self._hist_ax:
+                self._hist_fig.delaxes(ax)
+        self._hist_ax.clear()
+        self._hist_fig.patch.set_facecolor(C_SURFACE)
+        self._hist_ax.set_facecolor(C_SURFACE)
+
     def _refresh_histogram(self):
         src      = self._hist_source.currentText()
         show_cdf = self._cdf_btn.isChecked()
@@ -1806,9 +2015,7 @@ class MedicalImageApp(QMainWindow):
         if pixels is None:
             return
 
-        self._hist_ax.clear()
-        self._hist_fig.patch.set_facecolor(C_SURFACE)
-        self._hist_ax.set_facecolor(C_SURFACE)
+        self._prepare_hist_axes()
 
         color = self._hist_colors.get(src, C_ACCENT)
         flat  = pixels.flatten().astype(np.float32)
@@ -1866,9 +2073,7 @@ class MedicalImageApp(QMainWindow):
 
     def _compare_histograms(self):
         show_cdf = self._cdf_btn.isChecked()
-        self._hist_ax.clear()
-        self._hist_fig.patch.set_facecolor(C_SURFACE)
-        self._hist_ax.set_facecolor(C_SURFACE)
+        self._prepare_hist_axes()
 
         img_map = {
             "Original":   self.original_image,
