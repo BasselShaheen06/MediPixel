@@ -88,7 +88,6 @@ APP_FONT_CHOICES = [
     "IBM Plex Serif",
     "Passero One",
     "Silkscreen",
-    "Bitcount Prop Single Ink",
 ]
 FONT_SCALE_MIN = 70
 FONT_SCALE_MAX = 170
@@ -1403,12 +1402,6 @@ class MedicalImageApp(QMainWindow):
             fam_n = self._norm_font_name(fam)
             if req_n and (req_n in fam_n or fam_n in req_n):
                 return fam
-
-        # Bitcount variable fonts may expose variant family names.
-        if "bitcount" in req_n:
-            for fam in families:
-                if "bitcount" in self._norm_font_name(fam):
-                    return fam
         return None
 
     def _scale_stylesheet_fonts(self, stylesheet: str, scale: float) -> str:

@@ -108,7 +108,7 @@ def _try_load_google_font(css_family_query: str) -> str | None:
 
 
 def _try_load_local_font() -> str | None:
-    """Load a local pixel font file from assets/fonts if present."""
+    """Load a local app font file from assets/fonts if present."""
     root = Path(__file__).resolve().parent
     fonts_dir = root / "assets" / "fonts"
     if not fonts_dir.exists():
@@ -116,15 +116,10 @@ def _try_load_local_font() -> str | None:
 
     # Explicit user-provided paths first.
     preferred_paths = [
-        fonts_dir / "Bitcount_Prop_Single_Ink,IBM_Plex_Serif,Passero_One,Silkscreen" / "IBM_Plex_Serif" / "IBMPlexSerif-SemiBold.ttf",
-        fonts_dir / "Bitcount_Prop_Single_Ink,IBM_Plex_Serif,Passero_One,Silkscreen" / "Passero_One" / "PasseroOne-Regular.ttf",
-        fonts_dir / "Bitcount_Prop_Single_Ink,IBM_Plex_Serif,Passero_One,Silkscreen" / "Silkscreen" / "Silkscreen-Regular.ttf",
-        fonts_dir / "Bitcount_Prop_Single_Ink,IBM_Plex_Serif,Passero_One,Silkscreen" / "Bitcount_Prop_Single_Ink" /
-        "BitcountPropSingleInk-VariableFont_CRSV,ELSH,ELXP,SZP1,SZP2,XPN1,XPN2,YPN1,YPN2,slnt,wght.ttf",
-        fonts_dir / "Bitcount_Prop_Single_Ink,Silkscreen" / "Silkscreen" / "Silkscreen-Regular.ttf",
-        fonts_dir / "Bitcount_Prop_Single_Ink,Silkscreen" / "Silkscreen" / "Silkscreen-Bold.ttf",
-        fonts_dir / "Bitcount_Prop_Single_Ink,Silkscreen" / "Bitcount_Prop_Single_Ink" /
-        "BitcountPropSingleInk-VariableFont_CRSV,ELSH,ELXP,SZP1,SZP2,XPN1,XPN2,YPN1,YPN2,slnt,wght.ttf",
+        fonts_dir / "IBM_Plex_Serif,Passero_One,Silkscreen" / "IBM_Plex_Serif" / "IBMPlexSerif-SemiBold.ttf",
+        fonts_dir / "IBM_Plex_Serif,Passero_One,Silkscreen" / "Passero_One" / "PasseroOne-Regular.ttf",
+        fonts_dir / "IBM_Plex_Serif,Passero_One,Silkscreen" / "Silkscreen" / "Silkscreen-Regular.ttf",
+        fonts_dir / "IBM_Plex_Serif,Passero_One,Silkscreen" / "Silkscreen" / "Silkscreen-Bold.ttf",
     ]
 
     discovered = [
@@ -160,7 +155,6 @@ def _try_load_local_font() -> str | None:
         "VT323",
         "Pixeled",
         "Pixel Operator",
-        "Bitcount Prop Single Ink",
     ]
     for fam in preferred_families:
         if fam in loaded_families:
@@ -173,7 +167,7 @@ def _try_load_local_font() -> str | None:
 
 
 def _choose_app_font_family() -> str:
-    """Prefer pixel-style fonts with safe fallbacks for readability."""
+    """Prefer bundled UI fonts with safe fallbacks for readability."""
     settings = QSettings("MediPixel", "MediPixel")
     preferred_saved = settings.value("font_family", "IBM Plex Serif")
 
@@ -195,7 +189,6 @@ def _choose_app_font_family() -> str:
         "VT323",
         "Pixel Operator",
         "Pixeled",
-        "Bitcount Prop Single Ink",
     ]:
         if name in installed:
             return name
@@ -205,7 +198,6 @@ def _choose_app_font_family() -> str:
         "Press+Start+2P",
         "VT323",
         "Silkscreen:wght@400;700",
-        "Bitcount+Prop+Single+Ink:wght@100..900",
     ]:
         loaded = _try_load_google_font(query)
         if loaded:
@@ -222,7 +214,7 @@ def main():
         for child in root.findChildren(QWidget):
             child.setFont(font)
 
-    # Use pixel-style family app-wide, with graceful fallback.
+    # Use configured app-wide family, with graceful fallback.
     app_family = _choose_app_font_family()
     app.setStyleSheet(
         f"QWidget {{ font-family: '{app_family}', 'Segoe UI', sans-serif; }}"
