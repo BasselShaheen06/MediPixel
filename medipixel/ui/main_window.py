@@ -253,14 +253,19 @@ def _inline(label, widget, tooltip=""):
 # Color swatch button for histogram color picking
 # =============================================================================
 
+from PyQt5.QtCore import pyqtSignal
+
 class ColorSwatchBtn(QPushButton):
     """Small square button showing a color — click to open QColorDialog."""
+    
+    color_changed = pyqtSignal(str)
 
     def __init__(self, color: str, parent=None):
         super().__init__(parent)
         self._color = color
         self.setFixedSize(22, 22)
         self._update_style()
+        self.clicked.connect(self._pick_color)
 
     def _update_style(self):
         self.setStyleSheet(f"""
@@ -275,14 +280,16 @@ class ColorSwatchBtn(QPushButton):
     def color(self) -> str:
         return self._color
 
-    def mousePressEvent(self, event):
+    def _pick_color(self):
+        # Pass None as parent to prevent the dialog from inheriting the global app stylesheet
+        # which causes the text boxes inside it to have a dark/opaque fill
         qc = QColorDialog.getColor(
-            QColor(self._color), self, "Choose color"
+            QColor(self._color), None, "Choose color"
         )
         if qc.isValid():
             self._color = qc.name()
             self._update_style()
-        super().mousePressEvent(event)
+            self.color_changed.emit(self._color)
 
 
 # =============================================================================
@@ -530,6 +537,21 @@ class GuidedTour(QWidget):
         )
         msg_lay.addWidget(self._tour_text)
 
+        from PyQt5.QtWidgets import QCheckBox
+        self._auto_show_cb = QCheckBox("Show guide on startup")
+        self._auto_show_cb.setStyleSheet(f"""
+            QCheckBox {{
+                color:{C_TEXT_SEC}; font-size:11px; background:transparent;
+            }}
+        """)
+        
+        val = QSettings("MediPixel", "MediPixel").value("auto_show_tour", True)
+        is_auto = str(val).lower() == 'true' if isinstance(val, str) else bool(val)
+        self._auto_show_cb.setChecked(is_auto)
+        self._auto_show_cb.stateChanged.connect(
+            lambda v: QSettings("MediPixel", "MediPixel").setValue("auto_show_tour", bool(v))
+        )
+
         nav = QHBoxLayout()
         self._skip_btn = QPushButton("Skip tour")
         self._skip_btn.setStyleSheet(f"""
@@ -560,6 +582,7 @@ class GuidedTour(QWidget):
 
         pl.addWidget(self._tour_title)
         pl.addWidget(self._msg_frame)
+        pl.addWidget(self._auto_show_cb)
         pl.addLayout(nav)
 
         self._skip_btn.clicked.connect(self.end)
@@ -583,8 +606,6 @@ class GuidedTour(QWidget):
     def end(self):
         self._active = False
         self.hide()
-        # Remember that tour was shown
-        QSettings("MediPixel", "MediPixel").setValue("tour_shown", True)
 
     def _advance(self):
         self._idx += 1
@@ -713,9 +734,10 @@ class MedicalImageApp(QMainWindow):
         self._setup_tour()
         self._init_font_preference()
 
-        # Auto-show tour on first launch
-        settings = QSettings("MediPixel", "MediPixel")
-        if not settings.value("tour_shown", False):
+        # Auto-show tour on launch based on setting
+        val = QSettings("MediPixel", "MediPixel").value("auto_show_tour", True)
+        is_auto = str(val).lower() == 'true' if isinstance(val, str) else bool(val)
+        if is_auto:
             QTimer.singleShot(800, self._tour.start)
 
     # =========================================================================
@@ -1149,7 +1171,7 @@ class MedicalImageApp(QMainWindow):
         for key, default_color in HIST_COLORS_DEFAULT.items():
             swatch = ColorSwatchBtn(default_color)
             swatch.setToolTip(f"Click to change {key} histogram color")
-            swatch.clicked.connect(self._on_swatch_changed)
+            swatch.color_changed.connect(self._on_swatch_changed)
             hc.addWidget(swatch)
             label = QLabel(key.replace("Viewport ", "VP"))
             label.setStyleSheet(
