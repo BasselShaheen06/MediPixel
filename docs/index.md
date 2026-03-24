@@ -85,6 +85,6 @@ python main.py
 
 ## Project context
 
-Built as part of the Biomedical Signal and Image Processing course (SBME205), Faculty of Engineering, Cairo University. Semester 2, 2025–2026.
+Built as part of the Anaotmy & Imaging course @ Biomedical Engineering depatment, Cairo University. Semester 2, 2024-2025.
 
 Part of the [MedView open-source toolkit](https://github.com/BasselShaheen06/MedView--OpenSource_toolkit_for_Medical_Imaging).
