@@ -99,6 +99,16 @@
   color: #E0F2F1 !important;
 }
 
+[data-md-color-scheme="slate"] .md-typeset,
+[data-md-color-scheme="slate"] .md-content,
+[data-md-color-scheme="slate"] .md-nav__link,
+[data-md-color-scheme="slate"] .md-nav__title,
+[data-md-color-scheme="slate"] .md-header,
+[data-md-color-scheme="slate"] .md-header__title,
+[data-md-color-scheme="slate"] .md-tabs__link {
+  color: #FFFFFF;
+}
+
 /* ── Admonition — slightly more breathing room ──────────────────────────────── */
 
 .md-typeset .admonition {
