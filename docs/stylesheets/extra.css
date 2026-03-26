@@ -101,6 +101,11 @@
 
 [data-md-color-scheme="slate"] .md-typeset,
 [data-md-color-scheme="slate"] .md-content,
+[data-md-color-scheme="slate"] body,
+[data-md-color-scheme="slate"] .md-main,
+[data-md-color-scheme="slate"] .md-main__inner,
+[data-md-color-scheme="slate"] .md-sidebar,
+[data-md-color-scheme="slate"] .md-sidebar__scrollwrap,
 [data-md-color-scheme="slate"] .md-nav__link,
 [data-md-color-scheme="slate"] .md-nav__title,
 [data-md-color-scheme="slate"] .md-header,
