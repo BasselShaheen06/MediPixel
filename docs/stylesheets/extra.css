@@ -78,6 +78,27 @@
   color: #fff !important;
 }
 
+/* ── Dark mode overrides (Material: slate) ─────────────────────────────────── */
+
+[data-md-color-scheme="slate"] .md-footer {
+  background-color: #0F1F1C;
+}
+
+[data-md-color-scheme="slate"] .md-footer-meta {
+  background-color: #0A1715;
+}
+
+[data-md-color-scheme="slate"] .footer-contact {
+  background: rgba(128, 203, 196, 0.12);
+  border-color: rgba(128, 203, 196, 0.35);
+  color: #B2DFDB !important;
+}
+
+[data-md-color-scheme="slate"] .footer-contact:hover {
+  background: rgba(128, 203, 196, 0.22);
+  color: #E0F2F1 !important;
+}
+
 /* ── Admonition — slightly more breathing room ──────────────────────────────── */
 
 .md-typeset .admonition {
