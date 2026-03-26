@@ -24,7 +24,7 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QFrame, QPushButton, QLabel, QSlider, QComboBox, QSpinBox,
     QFileDialog, QSplitter, QScrollArea, QSizePolicy, QDialog,
-    QColorDialog, QApplication,
+    QColorDialog, QApplication, QCheckBox, QMessageBox,
 )
 from PyQt5.QtCore import Qt, QTimer, QSettings, QRect, QPoint
 from PyQt5.QtGui import QColor, QPainter, QPen, QFont, QFontDatabase
@@ -37,24 +37,57 @@ from medipixel.core import noise, denoiser, contrast
 from medipixel.core.contrast import to_luminance
 from medipixel.ui.canvas import DraggableCanvas
 
-# ── pyqtgraph config ──────────────────────────────────────────────────────────
-pg.setConfigOptions(imageAxisOrder="row-major", antialias=True)
-pg.setConfigOption("background", "#FFFFFF")
-pg.setConfigOption("foreground", "#0D1B1A")
-
 # ── Palette ───────────────────────────────────────────────────────────────────
-C_BG         = "#F4F7F7"
-C_SURFACE    = "#FFFFFF"
-C_SIDEBAR    = "#F4F7F7"
-C_ACCENT     = "#00695C"
-C_ACCENT_H   = "#00897B"
-C_ACCENT_L   = "#E0F2F1"
-C_TEXT       = "#0D1B1A"
-C_TEXT_SEC   = "#5A7A78"
-C_TEXT_TER   = "#9ABCB8"
-C_BORDER     = "#E0ECEB"
-C_BORDER_MED = "#C4D8D6"
-C_CARD_BG    = "#F0F7F6"
+_opts = QSettings("MediPixel", "MediPixel")
+IS_DARK = _opts.value("dark_mode", False, type=bool)
+
+if IS_DARK:
+    pg.setConfigOptions(imageAxisOrder="row-major", antialias=True)
+    pg.setConfigOption("background", "#121212")
+    pg.setConfigOption("foreground", "#E0E0E0")
+
+    C_BG         = "#121212"
+    C_SURFACE    = "#1E1E1E"
+    C_SIDEBAR    = "#121212"
+    C_ACCENT     = "#80CBC4"
+    C_ACCENT_H   = "#4DB6AC"
+    C_ACCENT_L   = "#004D40"
+    C_TEXT       = "#E0E0E0"
+    C_TEXT_SEC   = "#B0BEC5"
+    C_TEXT_TER   = "#78909C"
+    C_BORDER     = "#37474F"
+    C_BORDER_MED = "#455A64"
+    C_CARD_BG    = "#263238"
+
+    HIST_COLORS_DEFAULT = {
+        "Original":   "#E0E0E0",
+        "Viewport 1": "#80CBC4",
+        "Viewport 2": "#90CAF9",
+    }
+else:
+    pg.setConfigOptions(imageAxisOrder="row-major", antialias=True)
+    pg.setConfigOption("background", "#FFFFFF")
+    pg.setConfigOption("foreground", "#0D1B1A")
+
+    C_BG         = "#F4F7F7"
+    C_SURFACE    = "#FFFFFF"
+    C_SIDEBAR    = "#F4F7F7"
+    C_ACCENT     = "#00695C"
+    C_ACCENT_H   = "#00897B"
+    C_ACCENT_L   = "#E0F2F1"
+    C_TEXT       = "#0D1B1A"
+    C_TEXT_SEC   = "#5A7A78"
+    C_TEXT_TER   = "#9ABCB8"
+    C_BORDER     = "#E0ECEB"
+    C_BORDER_MED = "#C4D8D6"
+    C_CARD_BG    = "#F0F7F6"
+
+    # Default histogram series colors
+    HIST_COLORS_DEFAULT = {
+        "Original":   "#0D1B1A",
+        "Viewport 1": "#00695C",
+        "Viewport 2": "#1565C0",
+    }
 
 ROI_CFG = {
     "signal_a": {"pen": pg.mkPen("#B71C1C", width=2),
@@ -68,13 +101,6 @@ ROI_CFG = {
                  "label": "Noise", "mpl_color": "#1B5E20"},
 }
 ROI_ORDER = ["signal_a", "signal_b", "noise"]
-
-# Default histogram series colors
-HIST_COLORS_DEFAULT = {
-    "Original":   "#0D1B1A",
-    "Viewport 1": "#00695C",
-    "Viewport 2": "#1565C0",
-}
 
 FONT         = 13
 FONT_S       = 12
@@ -799,6 +825,14 @@ class MedicalImageApp(QMainWindow):
         lay.addWidget(self._font_scale)
         lay.addStretch()
 
+        # Dark Mode Toggle
+        self._dark_mode_btn = QPushButton()
+        self._dark_mode_btn.setToolTip("Toggle dark mode")
+        self._dark_mode_btn.setFixedSize(32, 32)
+        self._dark_mode_btn.clicked.connect(self._toggle_dark_mode)
+        self._set_dark_mode_icon(IS_DARK)
+        lay.addWidget(self._dark_mode_btn)
+
         # Color mode badge
         self._mode_badge = QLabel("Grayscale")
         self._mode_badge.setStyleSheet(f"""
@@ -1276,11 +1310,11 @@ class MedicalImageApp(QMainWindow):
             ll.addWidget(vl)
             cl.addWidget(lbar)
 
-            fig = Figure(facecolor="#0D1B1A")
+            fig = Figure(facecolor=C_BG)
             canvas = DraggableCanvas(fig)
             canvas.setMinimumHeight(165)
             ax = fig.add_subplot(111)
-            ax.set_facecolor("#0D1B1A")
+            ax.set_facecolor(C_BG)
             ax.axis("off")
             fig.tight_layout(pad=0.1)
             self._vp_figs[i]     = fig
@@ -1484,9 +1518,18 @@ class MedicalImageApp(QMainWindow):
 
         base_size = app.font().pointSize() if app.font().pointSize() > 0 else 10
         font = QFont(resolved, base_size)
-        app.setStyleSheet(
-            f"QWidget {{ font-family: '{resolved}', 'Segoe UI', sans-serif; }}"
-        )
+        
+        # Only inject the font-family, do not overwrite global backgrounds
+        old_ss = app.styleSheet()
+        new_font_rule = f"QWidget {{ font-family: '{resolved}', 'Segoe UI', sans-serif; }}"
+        if not old_ss:
+            app.setStyleSheet(new_font_rule)
+        elif "font-family:" in old_ss:
+            import re
+            app.setStyleSheet(re.sub(r"QWidget\s*\{\s*font-family:[^}]+\}", new_font_rule, old_ss))
+        else:
+            app.setStyleSheet(old_ss + "\n" + new_font_rule)
+            
         app.setFont(font)
 
         self.setFont(font)
@@ -1556,6 +1599,164 @@ class MedicalImageApp(QMainWindow):
             self._splitter.setSizes([sizes[0],
                                      max(sizes[1]-RIGHT_W, 400), RIGHT_W])
             self._right_toggle.setText("Thumbnails  ⇥")
+
+    def _set_dark_mode_icon(self, is_dark: bool):
+        # Sun = yellow, Moon = light blue
+        icon_text = "☀" if is_dark else "☾"
+        icon_color = "#FFD54F" if is_dark else "#81D4FA"
+        self._dark_mode_btn.setText(icon_text)
+        self._dark_mode_btn.setStyleSheet(f"""
+            QPushButton {{
+                background:transparent;
+                color:{icon_color};
+                border:1px solid {C_BORDER_MED}; border-radius:16px;
+                font-size:16px;
+            }}
+            QPushButton:hover {{ background:{C_ACCENT_L}; }}
+        """)
+
+    def _toggle_dark_mode(self, *args):
+        # We don't need 'state' anymore since it's a push button, read from _opts
+        _opts = QSettings("MediPixel", "MediPixel")
+        is_currently_dark = _opts.value("dark_mode", False, type=bool)
+        new_dark_mode = not is_currently_dark
+        _opts.setValue("dark_mode", new_dark_mode)
+        
+        self._apply_theme_update(new_dark_mode)
+
+    def _apply_theme_update(self, is_dark):
+        import re
+        global IS_DARK, C_BG, C_SURFACE, C_ACCENT, C_ACCENT_H, C_ACCENT_L
+        global C_TEXT, C_TEXT_SEC, C_TEXT_TER, C_BORDER, C_BORDER_MED, C_CARD_BG
+
+        IS_DARK = is_dark
+        if is_dark:
+            # Colors for Dark Mode
+            mapping = {
+                "#F4F7F7": "#121212", "#FFFFFF": "#1E1E1E", "#FFF": "#1E1E1E",
+                "#00695C": "#80CBC4", "#00897B": "#4DB6AC", "#E0F2F1": "#004D40",
+                "#0D1B1A": "#E0E0E0", "#5A7A78": "#B0BEC5", "#9ABCB8": "#78909C",
+                "#E0ECEB": "#37474F", "#C4D8D6": "#455A64", "#F0F7F6": "#263238"
+            }
+            pg.setConfigOption("background", "#121212")
+            pg.setConfigOption("foreground", "#E0E0E0")
+            C_BG, C_SURFACE = "#121212", "#1E1E1E"
+            C_ACCENT, C_ACCENT_H, C_ACCENT_L = "#80CBC4", "#4DB6AC", "#004D40"
+            C_TEXT, C_TEXT_SEC, C_TEXT_TER = "#E0E0E0", "#B0BEC5", "#78909C"
+            C_BORDER, C_BORDER_MED, C_CARD_BG = "#37474F", "#455A64", "#263238"
+            self._set_dark_mode_icon(True)
+        else:
+            # Colors for Light Mode
+            mapping = {
+                "#121212": "#F4F7F7", "#1E1E1E": "#FFFFFF", 
+                "#80CBC4": "#00695C", "#4DB6AC": "#00897B", "#004D40": "#E0F2F1",
+                "#E0E0E0": "#0D1B1A", "#B0BEC5": "#5A7A78", "#78909C": "#9ABCB8",
+                "#37474F": "#E0ECEB", "#455A64": "#C4D8D6", "#263238": "#F0F7F6"
+            }
+            pg.setConfigOption("background", "#FFFFFF")
+            pg.setConfigOption("foreground", "#0D1B1A")
+            C_BG, C_SURFACE = "#F4F7F7", "#FFFFFF"
+            C_ACCENT, C_ACCENT_H, C_ACCENT_L = "#00695C", "#00897B", "#E0F2F1"
+            C_TEXT, C_TEXT_SEC, C_TEXT_TER = "#0D1B1A", "#5A7A78", "#9ABCB8"
+            C_BORDER, C_BORDER_MED, C_CARD_BG = "#E0ECEB", "#C4D8D6", "#F0F7F6"
+            self._set_dark_mode_icon(False)
+
+        # Update default hist colors
+        if is_dark:
+            HIST_COLORS_DEFAULT.update({"Original": "#E0E0E0", "Viewport 1": "#80CBC4", "Viewport 2": "#90CAF9"})
+        else:
+            HIST_COLORS_DEFAULT.update({"Original": "#0D1B1A", "Viewport 1": "#00695C", "Viewport 2": "#1565C0"})
+        # Update current active hist colors
+        for k in self._hist_colors:
+            if self._hist_colors[k] in ["#0D1B1A", "#E0E0E0"]: 
+                self._hist_colors[k] = HIST_COLORS_DEFAULT["Original"]
+            elif self._hist_colors[k] in ["#00695C", "#80CBC4"]: 
+                self._hist_colors[k] = HIST_COLORS_DEFAULT["Viewport 1"]
+            elif self._hist_colors[k] in ["#1565C0", "#90CAF9"]:
+                self._hist_colors[k] = HIST_COLORS_DEFAULT["Viewport 2"]
+
+        def walk_widgets(widget):
+            # Process widgets carefully so styling updates seamlessly without lag
+            ss = widget.styleSheet()
+            if ss:
+                # Sort mapping keys by length (descending) so longer exact codes match before shorter prefixes (e.g. #FFFFFF before #FFF)
+                keys_sorted = sorted(mapping.keys(), key=len, reverse=True)
+                pattern = re.compile("|".join(re.escape(k) for k in keys_sorted), re.IGNORECASE)
+                lower_mapping = {k.lower(): v for k, v in mapping.items()}
+                
+                new_ss = pattern.sub(lambda m: lower_mapping.get(m.group(0).lower(), m.group(0)), ss)
+                if new_ss != ss:
+                    widget.setStyleSheet(new_ss)
+                    widget.style().unpolish(widget)
+                    widget.style().polish(widget)
+
+            # Recurse through children
+            for child in widget.children():
+                if isinstance(child, QWidget):
+                    walk_widgets(child)
+
+        # First disable updates to prevent redundant paints which cause lag
+        self.setUpdatesEnabled(False)
+        try:
+            walk_widgets(self)
+            self.setStyleSheet(f"QMainWindow {{ background:{C_BG}; }}")
+
+            # Sync base styles so font changes do not reapply an old theme
+            for w in [self] + self.findChildren(QWidget):
+                w.setProperty("_base_stylesheet", w.styleSheet())
+        
+            # Update specific tricky components
+            canvas_bg = C_BG if is_dark else C_SURFACE
+            if hasattr(self, '_canvas_wrap'):
+                self._canvas_wrap.setStyleSheet(f"background:{canvas_bg};")
+
+            if hasattr(self, '_pg_view'):
+                try:
+                    self._pg_view.setBackground(canvas_bg)
+                    view = self._pg_view.getView()
+                    view.setBackgroundColor(canvas_bg)
+                    self._pg_view.setStyleSheet(f"background:{canvas_bg};")
+                    # Update axis pens
+                    pen = pg.mkPen(color=C_TEXT)
+                    for pos in ['left', 'bottom', 'top', 'right']:
+                        axis = view.getAxis(pos)
+                        if axis:
+                            axis.setPen(pen)
+                            axis.setTextPen(pen)
+                    # Update histogram panel inside ImageView
+                    try:
+                        self._pg_view.ui.histogram.setBackground(C_BG)
+                        try:
+                            self._pg_view.ui.histogram.axis.setPen(pen)
+                            self._pg_view.ui.histogram.axis.setTextPen(pen)
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+
+            # Update viewports (mpl canvases)
+            if hasattr(self, '_vp_figs'):
+                for i in self._vp_figs:
+                    try:
+                        self._vp_figs[i].patch.set_facecolor(C_BG)
+                        self._vp_axes[i].set_facecolor(C_BG)
+                        self._vp_canvases[i].draw()
+                    except Exception:
+                        pass
+            
+            # Update histograms inside right panel
+            if hasattr(self, '_refresh_histogram'):
+                try:
+                    self._refresh_histogram()
+                except Exception:
+                    pass
+        finally:
+            self.setUpdatesEnabled(True)
+            self.update()
 
     # =========================================================================
     # Tab switching
@@ -1759,7 +1960,9 @@ class MedicalImageApp(QMainWindow):
     # =========================================================================
 
     def _display_thumb(self, image, ax, canvas,
-                       facecolor="#0D1B1A", draw_rois=False):
+                       facecolor=None, draw_rois=False):
+        if facecolor is None:
+            facecolor = C_BG
         ax.clear()
         ax.set_facecolor(facecolor)
 
