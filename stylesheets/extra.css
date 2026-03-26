@@ -1,0 +1,118 @@
+/* ── Typography — larger, more readable body text ──────────────────────────── */
+
+:root {
+  --md-typeset-font-size: 0.85rem;    /* default is 0.8rem — slightly larger */
+}
+
+/* Body text */
+.md-typeset {
+  font-size: 1rem;                    /* 16px at browser default */
+  line-height: 1.75;
+}
+
+/* Navigation tabs */
+.md-tabs__link {
+  font-size: 0.78rem;
+  letter-spacing: 0.01em;
+}
+
+/* Table text */
+.md-typeset table {
+  font-size: 0.9rem;
+}
+
+/* Code blocks */
+.md-typeset code {
+  font-size: 0.85em;
+}
+
+/* Headings */
+.md-typeset h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.md-typeset h2 {
+  font-size: 1.4rem;
+  font-weight: 600;
+  margin-top: 2rem;
+}
+
+.md-typeset h3 {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+/* ── Footer ─────────────────────────────────────────────────────────────────── */
+
+.md-footer {
+  background-color: #004D40;          /* darker teal, distinct from header */
+}
+
+.md-footer-meta {
+  background-color: #003D33;
+}
+
+.md-footer__inner {
+  padding: 1rem 1.5rem;
+}
+
+/* Contact pill in footer */
+.footer-contact {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 20px;
+  padding: 0.3rem 0.9rem;
+  font-size: 0.78rem;
+  color: #E0F2F1 !important;
+  text-decoration: none;
+  transition: background 0.2s;
+}
+
+.footer-contact:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff !important;
+}
+
+/* ── Dark mode overrides (Material: slate) ─────────────────────────────────── */
+
+[data-md-color-scheme="slate"] .md-footer {
+  background-color: #0F1F1C;
+}
+
+[data-md-color-scheme="slate"] .md-footer-meta {
+  background-color: #0A1715;
+}
+
+[data-md-color-scheme="slate"] .footer-contact {
+  background: rgba(128, 203, 196, 0.12);
+  border-color: rgba(128, 203, 196, 0.35);
+  color: #B2DFDB !important;
+}
+
+[data-md-color-scheme="slate"] .footer-contact:hover {
+  background: rgba(128, 203, 196, 0.22);
+  color: #E0F2F1 !important;
+}
+
+/* ── Admonition — slightly more breathing room ──────────────────────────────── */
+
+.md-typeset .admonition {
+  font-size: 0.9rem;
+}
+
+/* ── Table of contents — slightly larger ────────────────────────────────────── */
+
+.md-nav--secondary .md-nav__link {
+  font-size: 0.78rem;
+}
+
+/* ── Search bar placeholder ─────────────────────────────────────────────────── */
+
+.md-search__input::placeholder {
+  font-size: 0.85rem;
+}
